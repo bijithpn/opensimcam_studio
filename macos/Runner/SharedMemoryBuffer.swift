@@ -14,6 +14,7 @@ public final class SharedMemoryBuffer {
     
     private var fileDescriptor: Int32 = -1
     private var mappedMemory: UnsafeMutableRawPointer?
+    private let lock = NSLock()
     private let ciContext = CIContext(options: [
         .useSoftwareRenderer: false,
         .priorityRequestLow: false
@@ -32,42 +33,51 @@ public final class SharedMemoryBuffer {
         let dir = (path as NSString).deletingLastPathComponent
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         
-        fileDescriptor = open(path, O_RDWR | O_CREAT | O_TRUNC, 0o666)
+        fileDescriptor = open(path, O_RDWR | O_CREAT, 0o666)
         guard fileDescriptor >= 0 else {
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno), userInfo: [NSLocalizedDescriptionKey: "Failed to open shm file: \(path)"])
         }
         
-        if ftruncate(fileDescriptor, off_t(totalSize)) != 0 {
-            close(fileDescriptor)
-            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno), userInfo: [NSLocalizedDescriptionKey: "Failed to ftruncate shm file: \(path)"])
+        var st = stat()
+        if fstat(fileDescriptor, &st) == 0 && st.st_size < off_t(totalSize) {
+            _ = ftruncate(fileDescriptor, off_t(totalSize))
         }
         
         mappedMemory = mmap(nil, totalSize, PROT_READ | PROT_WRITE, MAP_SHARED, fileDescriptor, 0)
         guard mappedMemory != MAP_FAILED, let mapped = mappedMemory else {
             close(fileDescriptor)
+            fileDescriptor = -1
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno), userInfo: [NSLocalizedDescriptionKey: "mmap failed for \(path)"])
         }
         
-        // Fill initial buffer with black background
-        memset(mapped, 0, totalSize)
-        for slot in 0..<slotCount {
-            let slotPtr = mapped.advanced(by: slot * frameSize).assumingMemoryBound(to: UInt8.self)
-            for i in stride(from: 3, to: frameSize, by: 4) {
-                slotPtr[i] = 255
+        // Fill initial buffer with black background if newly created
+        if st.st_size < off_t(totalSize) {
+            memset(mapped, 0, totalSize)
+            for slot in 0..<slotCount {
+                let slotPtr = mapped.advanced(by: slot * frameSize).assumingMemoryBound(to: UInt8.self)
+                for i in stride(from: 3, to: frameSize, by: 4) {
+                    slotPtr[i] = 255
+                }
             }
         }
     }
     
     deinit {
+        lock.lock()
         if let mapped = mappedMemory {
             munmap(mapped, totalSize)
+            mappedMemory = nil
         }
         if fileDescriptor >= 0 {
             close(fileDescriptor)
+            fileDescriptor = -1
         }
+        lock.unlock()
     }
     
-    public func renderCIImage(_ ciImage: CIImage, slot: Int, fitMode: String = "fit") {
+    public func renderCIImage(_ ciImage: CIImage, slot: Int, fitMode: String = "fill") {
+        lock.lock()
+        defer { lock.unlock() }
         guard let mapped = mappedMemory, slot >= 0 && slot < slotCount else { return }
         let destSlot = mapped.advanced(by: slot * frameSize)
         
@@ -103,9 +113,9 @@ public final class SharedMemoryBuffer {
         if fitMode == "stretch" {
             // Stretch to 1080x1920
             transform = CGAffineTransform(scaleX: scaleX, y: scaleY)
-        } else if fitMode == "fill" {
-            // Fill 9:16 completely, crop excess
-            let scale = max(scaleX, scaleY)
+        } else if fitMode == "fit" {
+            // Contain / Letterbox with black bars
+            let scale = min(scaleX, scaleY)
             let scaledW = srcW * scale
             let scaledH = srcH * scale
             let offsetX = (targetDisplayW - scaledW) / 2.0
@@ -113,8 +123,9 @@ public final class SharedMemoryBuffer {
             transform = CGAffineTransform(scaleX: scale, y: scale)
                 .concatenating(CGAffineTransform(translationX: offsetX, y: offsetY))
         } else {
-            // "fit" (Default contain): Full aspect ratio with letterboxing
-            let scale = min(scaleX, scaleY)
+            // Default "fill" (Cover 9:16) & all rotation modes:
+            // Scales to completely fill the 1080x1920 portrait screen edge-to-edge
+            let scale = max(scaleX, scaleY)
             let scaledW = srcW * scale
             let scaledH = srcH * scale
             let offsetX = (targetDisplayW - scaledW) / 2.0

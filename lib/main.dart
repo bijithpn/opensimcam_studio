@@ -62,7 +62,7 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
 
   int _selectedTab = 0; // 0: Camera, 1: Device, 2: Actions, 3: Settings
   CameraSourceType _currentSource = CameraSourceType.demoVideo;
-  String _fitMode = 'fit'; // Default to "fit" to prevent irregular stretching!
+  String _fitMode = 'fill'; // Default to "fill" to provide full-screen portrait camera feed!
   StreamSubscription? _previewSubscription;
   Timer? _statusPollTimer;
   Uint8List? _previewFrame;

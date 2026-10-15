@@ -30,7 +30,7 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
     private let previewQueue = DispatchQueue(label: "opensimcam.preview.queue", qos: .userInteractive)
     private var isGeneratingPreview = false
     private var lastPreviewTime: CFAbsoluteTime = 0
-    public var currentFitMode = "fit"
+    public var currentFitMode = "fill"
     
     public var currentMediaSource: MediaSource? {
         didSet {
