@@ -101,6 +101,9 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
             if #available(macOS 14.0, *) {
                 deviceTypes.append(.external)
             }
+            if #available(macOS 13.0, *) {
+                deviceTypes.append(.continuityCamera)
+            }
             let discovery = AVCaptureDevice.DiscoverySession(
                 deviceTypes: deviceTypes,
                 mediaType: .video,
@@ -160,6 +163,17 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
                 NSWorkspace.shared.open(url)
             }
             result(true)
+            
+        case "checkCameraPermission":
+            let status = AVCaptureDevice.authorizationStatus(for: .video)
+            result(status == .authorized)
+            
+        case "requestCameraPermission":
+            AVCaptureDevice.requestAccess(for: .video) { granted in
+                DispatchQueue.main.async {
+                    result(granted)
+                }
+            }
             
         default:
             result(FlutterMethodNotImplemented)

@@ -20,7 +20,7 @@ public final class SharedMemoryBuffer {
     ])
     private let colorSpace = CGColorSpaceCreateDeviceRGB()
     
-    public init(path: String, width: Int = 1080, height: Int = 1920, slotCount: Int = 3) throws {
+    public init(path: String, width: Int = 1920, height: Int = 1080, slotCount: Int = 3) throws {
         self.path = path
         self.width = width
         self.height = height
@@ -67,52 +67,91 @@ public final class SharedMemoryBuffer {
         }
     }
     
-    public func renderCIImage(_ ciImage: CIImage, slot: Int, fitMode: String = "fill") {
+    public func renderCIImage(_ ciImage: CIImage, slot: Int, fitMode: String = "fit") {
         guard let mapped = mappedMemory, slot >= 0 && slot < slotCount else { return }
         let destSlot = mapped.advanced(by: slot * frameSize)
         
-        let srcW = ciImage.extent.width
-        let srcH = ciImage.extent.height
-        guard srcW > 0, srcH > 0 else { return }
+        // 1. Normalize origin so extent starts at (0, 0)
+        let origX = ciImage.extent.origin.x
+        let origY = ciImage.extent.origin.y
+        var baseImage = ciImage.transformed(by: CGAffineTransform(translationX: -origX, y: -origY))
         
-        let scaleX = CGFloat(width) / srcW
-        let scaleY = CGFloat(height) / srcH
-        let scale = (fitMode == "fit") ? min(scaleX, scaleY) : max(scaleX, scaleY)
-        
-        let scaledImage = ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        let scaledW = scaledImage.extent.width
-        let scaledH = scaledImage.extent.height
-        
-        // Center inside the 1080x1920 viewport
-        let offsetX = (CGFloat(width) - scaledW) / 2.0
-        let offsetY = (CGFloat(height) - scaledH) / 2.0
-        let centeredImage = scaledImage.transformed(by: CGAffineTransform(translationX: offsetX, y: offsetY))
-        
-        let targetBounds = CGRect(x: 0, y: 0, width: width, height: height)
-        let outputImage: CIImage
-        if fitMode == "fit" {
-            let blackBg = CIImage(color: CIColor.black).cropped(to: targetBounds)
-            outputImage = centeredImage.composited(over: blackBg)
-        } else {
-            outputImage = centeredImage.cropped(to: targetBounds)
+        // 2. User-requested orientation / rotation adjustments
+        if fitMode == "rotate90" {
+            let rot = baseImage.transformed(by: CGAffineTransform(rotationAngle: -.pi / 2))
+            baseImage = rot.transformed(by: CGAffineTransform(translationX: -rot.extent.origin.x, y: -rot.extent.origin.y))
+        } else if fitMode == "rotate180" {
+            let rot = baseImage.transformed(by: CGAffineTransform(rotationAngle: .pi))
+            baseImage = rot.transformed(by: CGAffineTransform(translationX: -rot.extent.origin.x, y: -rot.extent.origin.y))
+        } else if fitMode == "rotate270" {
+            let rot = baseImage.transformed(by: CGAffineTransform(rotationAngle: .pi / 2))
+            baseImage = rot.transformed(by: CGAffineTransform(translationX: -rot.extent.origin.x, y: -rot.extent.origin.y))
         }
         
+        let srcW = baseImage.extent.width
+        let srcH = baseImage.extent.height
+        guard srcW > 0, srcH > 0 else { return }
+        
+        // 3. Frame image for standard portrait device display (1080x1920)
+        let targetDisplayW: CGFloat = 1080.0
+        let targetDisplayH: CGFloat = 1920.0
+        
+        let scaleX = targetDisplayW / srcW
+        let scaleY = targetDisplayH / srcH
+        
+        let transform: CGAffineTransform
+        if fitMode == "stretch" {
+            // Stretch to 1080x1920
+            transform = CGAffineTransform(scaleX: scaleX, y: scaleY)
+        } else if fitMode == "fill" {
+            // Fill 9:16 completely, crop excess
+            let scale = max(scaleX, scaleY)
+            let scaledW = srcW * scale
+            let scaledH = srcH * scale
+            let offsetX = (targetDisplayW - scaledW) / 2.0
+            let offsetY = (targetDisplayH - scaledH) / 2.0
+            transform = CGAffineTransform(scaleX: scale, y: scale)
+                .concatenating(CGAffineTransform(translationX: offsetX, y: offsetY))
+        } else {
+            // "fit" (Default contain): Full aspect ratio with letterboxing
+            let scale = min(scaleX, scaleY)
+            let scaledW = srcW * scale
+            let scaledH = srcH * scale
+            let offsetX = (targetDisplayW - scaledW) / 2.0
+            let offsetY = (targetDisplayH - scaledH) / 2.0
+            transform = CGAffineTransform(scaleX: scale, y: scale)
+                .concatenating(CGAffineTransform(translationX: offsetX, y: offsetY))
+        }
+        
+        let scaledImage = baseImage.transformed(by: transform)
+        let displayBounds = CGRect(x: 0, y: 0, width: targetDisplayW, height: targetDisplayH)
+        let blackBg = CIImage(color: CIColor.black).cropped(to: displayBounds)
+        let uprightPortraitImage = scaledImage.composited(over: blackBg).cropped(to: displayBounds)
+        
+        // 4. Map into the 1920x1080 camera sensor coordinate space by applying .oriented(.left)
+        // In AVFoundation, camera sensors are physically mounted in landscape (1920x1080).
+        // SimCam/AVFoundation automatically applies .oriented(.right) when apps read portrait video.
+        // Since .oriented(.left) followed by .oriented(.right) is the identity transform (360°),
+        // the final camera feed inside the Simulator is 100% upright, distortion-free, and properly oriented!
+        let sensorImage = uprightPortraitImage.oriented(.left)
+        let sensorBounds = CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height))
+        
         ciContext.render(
-            outputImage,
+            sensorImage,
             toBitmap: destSlot,
             rowBytes: bytesPerRow,
-            bounds: targetBounds,
+            bounds: sensorBounds,
             format: .BGRA8,
             colorSpace: colorSpace
         )
     }
     
-    public func writePixelBuffer(_ pixelBuffer: CVPixelBuffer, slot: Int, fitMode: String = "fill") {
+    public func writePixelBuffer(_ pixelBuffer: CVPixelBuffer, slot: Int, fitMode: String = "fit") {
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         renderCIImage(ciImage, slot: slot, fitMode: fitMode)
     }
     
-    public func writeCGImage(_ image: CGImage, slot: Int, fitMode: String = "fill") {
+    public func writeCGImage(_ image: CGImage, slot: Int, fitMode: String = "fit") {
         let ciImage = CIImage(cgImage: image)
         renderCIImage(ciImage, slot: slot, fitMode: fitMode)
     }

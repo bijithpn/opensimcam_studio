@@ -126,11 +126,29 @@ public final class CameraSource: NSObject, MediaSource, AVCaptureVideoDataOutput
     }
     
     public func start() {
+        let authStatus = AVCaptureDevice.authorizationStatus(for: .video)
+        if authStatus == .authorized {
+            startSession()
+        } else if authStatus == .notDetermined {
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                if granted {
+                    self?.startSession()
+                } else {
+                    print("[CameraSource] Camera permission denied by user")
+                }
+            }
+        } else {
+            print("[CameraSource] Camera access is not authorized (\(authStatus.rawValue))")
+        }
+    }
+    
+    private func startSession() {
         sessionQueue.async { [weak self] in
             guard let self = self, !self.isRunning else { return }
             self.setupCaptureSession()
             self.captureSession.startRunning()
             self.isRunning = true
+            print("[CameraSource] Camera session started running")
         }
     }
     
@@ -139,42 +157,59 @@ public final class CameraSource: NSObject, MediaSource, AVCaptureVideoDataOutput
             guard let self = self, self.isRunning else { return }
             self.captureSession.stopRunning()
             self.isRunning = false
+            print("[CameraSource] Camera session stopped")
         }
     }
     
     private func setupCaptureSession() {
         captureSession.beginConfiguration()
-        captureSession.sessionPreset = .hd1920x1080
         
         var cameraDevice: AVCaptureDevice?
+        var deviceTypes: [AVCaptureDevice.DeviceType] = [.builtInWideAngleCamera]
+        if #available(macOS 14.0, *) {
+            deviceTypes.append(.external)
+        }
+        if #available(macOS 13.0, *) {
+            deviceTypes.append(.continuityCamera)
+        }
+        let discovery = AVCaptureDevice.DiscoverySession(
+            deviceTypes: deviceTypes,
+            mediaType: .video,
+            position: .unspecified
+        )
         if let id = preferredDeviceID {
-            cameraDevice = AVCaptureDevice(uniqueID: id)
+            cameraDevice = discovery.devices.first(where: { $0.uniqueID == id })
         }
         if cameraDevice == nil {
-            var deviceTypes: [AVCaptureDevice.DeviceType] = [.builtInWideAngleCamera]
-            if #available(macOS 14.0, *) {
-                deviceTypes.append(.external)
-            }
-            let discovery = AVCaptureDevice.DiscoverySession(
-                deviceTypes: deviceTypes,
-                mediaType: .video,
-                position: .unspecified
-            )
             cameraDevice = discovery.devices.first
         }
         
         guard let device = cameraDevice else {
+            print("[CameraSource] No matching capture device found")
             captureSession.commitConfiguration()
             return
         }
+        
+        print("[CameraSource] Using camera: \(device.localizedName) (\(device.uniqueID))")
         
         do {
             let input = try AVCaptureDeviceInput(device: device)
             if captureSession.canAddInput(input) {
                 captureSession.addInput(input)
+            } else {
+                print("[CameraSource] Cannot add camera input to session")
             }
         } catch {
             print("[CameraSource] Error creating device input: \(error)")
+        }
+        
+        // Dynamically select the best preset supported by the device
+        if captureSession.canSetSessionPreset(.hd1920x1080) {
+            captureSession.sessionPreset = .hd1920x1080
+        } else if captureSession.canSetSessionPreset(.hd1280x720) {
+            captureSession.sessionPreset = .hd1280x720
+        } else if captureSession.canSetSessionPreset(.high) {
+            captureSession.sessionPreset = .high
         }
         
         videoOutput.videoSettings = [

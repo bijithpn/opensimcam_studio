@@ -18,8 +18,9 @@ class MainFlutterWindow: NSWindow {
     self.isMovableByWindowBackground = true
     self.backgroundColor = NSColor(red: 0.07, green: 0.08, blue: 0.12, alpha: 1.0)
     
-    self.setContentSize(NSSize(width: 440, height: 680))
-    self.minSize = NSSize(width: 380, height: 560)
+    self.setContentSize(NSSize(width: 360, height: 720))
+    self.minSize = NSSize(width: 340, height: 600)
+    self.maxSize = NSSize(width: 440, height: 860)
     self.center()
 
     super.awakeFromNib()

@@ -27,8 +27,10 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
         .priorityRequestLow: false
     ])
     private let colorSpace = CGColorSpaceCreateDeviceRGB()
+    private let previewQueue = DispatchQueue(label: "opensimcam.preview.queue", qos: .userInteractive)
+    private var isGeneratingPreview = false
     private var lastPreviewTime: CFAbsoluteTime = 0
-    public var currentFitMode = "fill"
+    public var currentFitMode = "fit"
     
     public var currentMediaSource: MediaSource? {
         didSet {
@@ -142,10 +144,12 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
             }
         }
         
-        // GPU-accelerated JPEG generation for Flutter UI preview (~25 FPS)
+        // GPU-accelerated JPEG generation for Flutter UI preview (~25 FPS) on dedicated queue
         let now = CFAbsoluteTimeGetCurrent()
-        if now - lastPreviewTime > 0.04 {
+        if now - lastPreviewTime > 0.04 && !isGeneratingPreview {
             lastPreviewTime = now
+            isGeneratingPreview = true
+            
             var ci: CIImage?
             if let pb = pixelBuffer {
                 ci = CIImage(cvPixelBuffer: pb)
@@ -154,20 +158,27 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
             }
             
             if let ci = ci {
-                // Downscale preview to standard height (720px) to maximize preview fluidity
-                let targetH: CGFloat = 720.0
-                let scale = min(1.0, targetH / ci.extent.height)
-                let previewCI = (scale < 1.0) ? ci.transformed(by: CGAffineTransform(scaleX: scale, y: scale)) : ci
-                
-                if let jpeg = ciContext.jpegRepresentation(
-                    of: previewCI,
-                    colorSpace: colorSpace,
-                    options: [CIImageRepresentationOption(rawValue: "lossyCompressionFactor"): 0.7]
-                ) {
-                    DispatchQueue.main.async { [weak self] in
-                        self?.onPreviewFrame?(jpeg)
+                previewQueue.async { [weak self] in
+                    defer { self?.isGeneratingPreview = false }
+                    guard let self = self else { return }
+                    
+                    // Downscale preview to standard height (720px) to maximize preview fluidity
+                    let targetH: CGFloat = 720.0
+                    let scale = min(1.0, targetH / ci.extent.height)
+                    let previewCI = (scale < 1.0) ? ci.transformed(by: CGAffineTransform(scaleX: scale, y: scale)) : ci
+                    
+                    if let jpeg = self.ciContext.jpegRepresentation(
+                        of: previewCI,
+                        colorSpace: self.colorSpace,
+                        options: [CIImageRepresentationOption(rawValue: "lossyCompressionFactor"): 0.7]
+                    ) {
+                        DispatchQueue.main.async {
+                            self.onPreviewFrame?(jpeg)
+                        }
                     }
                 }
+            } else {
+                isGeneratingPreview = false
             }
         }
     }

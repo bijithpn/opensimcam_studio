@@ -16,8 +16,8 @@ public final class ProcessChannel {
     public var backShm: SharedMemoryBuffer?
     
     public var isCameraActive = false
-    public var activeCamera = "front"
-    public var fitMode = "fill"
+    public var activeCamera = "back"
+    public var fitMode = "fit"
     private var currentSlotIndex = 0
     
     public init(simUDID: String, bundleID: String, channelPath: String) {
@@ -75,26 +75,43 @@ public final class ProcessChannel {
         let backPath = "/private/tmp/com.swmansion.SimCam/\(pidStr).back.stream.shm"
         
         do {
-            frontShm = try SharedMemoryBuffer(path: frontPath, width: 1080, height: 1920, slotCount: 3)
-            backShm = try SharedMemoryBuffer(path: backPath, width: 1080, height: 1920, slotCount: 3)
+            frontShm = try SharedMemoryBuffer(path: frontPath, width: 1920, height: 1080, slotCount: 3)
+            backShm = try SharedMemoryBuffer(path: backPath, width: 1920, height: 1080, slotCount: 3)
         } catch {
             print("[ProcessChannel] Failed to setup shared memory: \(error)")
         }
     }
     
     public func sendOffer() {
-        guard let shm = (activeCamera == "back") ? (backShm ?? frontShm) : frontShm else { return }
-        let offer: [String: Any] = [
-            "type": "offer",
-            "shmPath": shm.path,
-            "count": shm.slotCount,
-            "frameSize": shm.frameSize,
-            "bytesPerRow": shm.bytesPerRow,
-            "width": shm.width,
-            "height": shm.height,
-            "metadataTypes": ["org.iso.QRCode"]
-        ]
-        sendJSON(offer)
+        if let fShm = frontShm {
+            let frontOffer: [String: Any] = [
+                "type": "offer",
+                "camera": "front",
+                "shmPath": fShm.path,
+                "count": fShm.slotCount,
+                "frameSize": fShm.frameSize,
+                "bytesPerRow": fShm.bytesPerRow,
+                "width": fShm.width,
+                "height": fShm.height,
+                "metadataTypes": ["org.iso.QRCode"]
+            ]
+            sendJSON(frontOffer)
+        }
+        
+        if let bShm = backShm {
+            let backOffer: [String: Any] = [
+                "type": "offer",
+                "camera": "back",
+                "shmPath": bShm.path,
+                "count": bShm.slotCount,
+                "frameSize": bShm.frameSize,
+                "bytesPerRow": bShm.bytesPerRow,
+                "width": bShm.width,
+                "height": bShm.height,
+                "metadataTypes": ["org.iso.QRCode"]
+            ]
+            sendJSON(backOffer)
+        }
     }
     
     private func startReading() {
@@ -137,7 +154,7 @@ public final class ProcessChannel {
         
         switch type {
         case "start":
-            let cam = json["camera"] as? String ?? "front"
+            let cam = json["camera"] as? String ?? "back"
             activeCamera = cam
             isCameraActive = true
             sendOffer()
@@ -149,33 +166,59 @@ public final class ProcessChannel {
     }
     
     public func deliverPixelBuffer(_ pixelBuffer: CVPixelBuffer) {
-        let shm = (activeCamera == "back") ? (backShm ?? frontShm) : frontShm
-        guard let buffer = shm else { return }
+        currentSlotIndex = (currentSlotIndex + 1) % 3
         
-        currentSlotIndex = (currentSlotIndex + 1) % buffer.slotCount
-        buffer.writePixelBuffer(pixelBuffer, slot: currentSlotIndex, fitMode: fitMode)
+        // Feed back camera
+        if let bShm = backShm {
+            bShm.writePixelBuffer(pixelBuffer, slot: currentSlotIndex, fitMode: fitMode)
+            let backMsg: [String: Any] = [
+                "type": "frame",
+                "camera": "back",
+                "index": currentSlotIndex,
+                "sourceMirrorCompensation": false
+            ]
+            sendJSON(backMsg)
+        }
         
-        let frameMsg: [String: Any] = [
-            "type": "frame",
-            "index": currentSlotIndex,
-            "sourceMirrorCompensation": false
-        ]
-        sendJSON(frameMsg)
+        // Feed front camera
+        if let fShm = frontShm {
+            fShm.writePixelBuffer(pixelBuffer, slot: currentSlotIndex, fitMode: fitMode)
+            let frontMsg: [String: Any] = [
+                "type": "frame",
+                "camera": "front",
+                "index": currentSlotIndex,
+                "sourceMirrorCompensation": true
+            ]
+            sendJSON(frontMsg)
+        }
     }
     
     public func deliverCGImage(_ image: CGImage) {
-        let shm = (activeCamera == "back") ? (backShm ?? frontShm) : frontShm
-        guard let buffer = shm else { return }
+        currentSlotIndex = (currentSlotIndex + 1) % 3
         
-        currentSlotIndex = (currentSlotIndex + 1) % buffer.slotCount
-        buffer.writeCGImage(image, slot: currentSlotIndex, fitMode: fitMode)
+        // Feed back camera
+        if let bShm = backShm {
+            bShm.writeCGImage(image, slot: currentSlotIndex, fitMode: fitMode)
+            let backMsg: [String: Any] = [
+                "type": "frame",
+                "camera": "back",
+                "index": currentSlotIndex,
+                "sourceMirrorCompensation": false
+            ]
+            sendJSON(backMsg)
+        }
         
-        let frameMsg: [String: Any] = [
-            "type": "frame",
-            "index": currentSlotIndex,
-            "sourceMirrorCompensation": false
-        ]
-        sendJSON(frameMsg)
+        // Feed front camera
+        if let fShm = frontShm {
+            fShm.writeCGImage(image, slot: currentSlotIndex, fitMode: fitMode)
+            let frontMsg: [String: Any] = [
+                "type": "frame",
+                "camera": "front",
+                "index": currentSlotIndex,
+                "sourceMirrorCompensation": true
+            ]
+            sendJSON(frontMsg)
+        }
     }
     
     public func deliverMetadata(_ objects: [[String: Any]]) {

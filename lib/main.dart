@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -21,81 +20,49 @@ class OpenSimCamApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF0C0E14),
+        scaffoldBackgroundColor: const Color(0xFF0F111A),
         fontFamily: '.AppleSystemUIFont',
         colorScheme: const ColorScheme.dark(
           primary: Color(0xFF3B82F6),
-          secondary: Color(0xFF8B5CF6),
-          surface: Color(0xFF141824),
+          surface: Color(0xFF161926),
         ),
       ),
-      home: const OpenSimCamStudioHome(),
+      home: const OpenSimCamInspectorHome(),
     );
   }
 }
 
 enum CameraSourceType {
-  demoVideo(
-    title: 'Demo Video',
-    icon: CupertinoIcons.play_rectangle_fill,
-    tooltip: 'Looping demo motion video',
-  ),
-  passthrough(
-    title: 'Passthrough',
-    icon: CupertinoIcons.macwindow,
-    tooltip: 'Mac UI behind Simulator',
-  ),
-  webcam(
-    title: 'Webcam',
-    icon: CupertinoIcons.video_camera_solid,
-    tooltip: 'FaceTime HD / USB camera',
-  ),
-  image(
-    title: 'Image',
-    icon: CupertinoIcons.photo_fill,
-    tooltip: 'Custom PNG, JPG or HEIC image',
-  ),
-  video(
-    title: 'Video',
-    icon: CupertinoIcons.film_fill,
-    tooltip: 'Custom MP4 or MOV video',
-  ),
-  qrCode(
-    title: 'QR Code',
-    icon: CupertinoIcons.qrcode,
-    tooltip: 'Dynamic QR generator & barcode metadata',
-  ),
-  testPattern(
-    title: 'Test Bars',
-    icon: CupertinoIcons.tv_fill,
-    tooltip: 'SMPTE diagnostic color bars',
-  );
+  webcam('FaceTime HD Camera', CupertinoIcons.video_camera_solid),
+  passthrough('Screen Passthrough', CupertinoIcons.macwindow),
+  demoVideo('Demo Video Loop', CupertinoIcons.play_rectangle_fill),
+  image('Custom Image File...', CupertinoIcons.photo_fill),
+  video('Custom Video File...', CupertinoIcons.film_fill),
+  qrCode('Dynamic QR Code', CupertinoIcons.qrcode),
+  testPattern('SMPTE Test Bars', CupertinoIcons.tv_fill);
 
   final String title;
   final IconData icon;
-  final String tooltip;
-  const CameraSourceType({
-    required this.title,
-    required this.icon,
-    required this.tooltip,
-  });
+  const CameraSourceType(this.title, this.icon);
 }
 
-class OpenSimCamStudioHome extends StatefulWidget {
-  const OpenSimCamStudioHome({super.key});
+class OpenSimCamInspectorHome extends StatefulWidget {
+  const OpenSimCamInspectorHome({super.key});
 
   @override
-  State<OpenSimCamStudioHome> createState() => _OpenSimCamStudioHomeState();
+  State<OpenSimCamInspectorHome> createState() =>
+      _OpenSimCamInspectorHomeState();
 }
 
-class _OpenSimCamStudioHomeState extends State<OpenSimCamStudioHome> {
+class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
   static const MethodChannel _controlChannel =
       MethodChannel('com.opensimcam.studio/control');
   static const EventChannel _previewChannel =
       EventChannel('com.opensimcam.studio/preview');
 
-  // Default to demoVideo so no permissions are requested on startup!
+  int _selectedTab = 0; // 0: Camera, 1: Device, 2: Actions, 3: Settings
   CameraSourceType _currentSource = CameraSourceType.demoVideo;
+  String _fitMode = 'fit'; // Default to "fit" to prevent irregular stretching!
   StreamSubscription? _previewSubscription;
   Timer? _statusPollTimer;
   Uint8List? _previewFrame;
@@ -104,7 +71,6 @@ class _OpenSimCamStudioHomeState extends State<OpenSimCamStudioHome> {
   String? _connectedAppBundle;
   List<Map<String, String>> _availableCameras = [];
   String? _selectedCameraId;
-  String _fitMode = 'fill';
   bool _hasScreenCapturePermission = true;
 
   // Custom paths
@@ -232,7 +198,6 @@ class _OpenSimCamStudioHomeState extends State<OpenSimCamStudioHome> {
               false;
           setState(() => _hasScreenCapturePermission = hasPerm);
           if (!hasPerm) {
-            // Request permission once without looping
             await _controlChannel
                 .invokeMethod('requestScreenCapturePermission');
             return;
@@ -241,6 +206,13 @@ class _OpenSimCamStudioHomeState extends State<OpenSimCamStudioHome> {
           break;
 
         case CameraSourceType.webcam:
+          final hasCameraPerm = await _controlChannel
+                  .invokeMethod<bool>('checkCameraPermission') ??
+              false;
+          if (!hasCameraPerm) {
+            await _controlChannel.invokeMethod('requestCameraPermission');
+          }
+          await _fetchCameras();
           await _controlChannel.invokeMethod('startCamera', {
             'deviceId': _selectedCameraId,
           });
@@ -285,8 +257,29 @@ class _OpenSimCamStudioHomeState extends State<OpenSimCamStudioHome> {
     }
   }
 
-  Future<void> _openSystemSettings() async {
-    await _controlChannel.invokeMethod('openSystemPreferencesScreenCapture');
+  Future<void> _setFitMode(String mode) async {
+    setState(() => _fitMode = mode);
+    await _controlChannel.invokeMethod('setFitMode', {'mode': mode});
+  }
+
+  Future<void> _relaunchApp(String bundleId, String udid) async {
+    try {
+      await _controlChannel.invokeMethod('relaunchApp', {
+        'bundleId': bundleId,
+        'udid': udid,
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Relaunched $bundleId with camera synced!'),
+            backgroundColor: const Color(0xFF10B981),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error relaunching app: $e');
+    }
   }
 
   Future<void> _pickImageFile() async {
@@ -315,693 +308,635 @@ class _OpenSimCamStudioHomeState extends State<OpenSimCamStudioHome> {
     }
   }
 
-  Future<void> _toggleFitMode() async {
-    final newMode = _fitMode == 'fill' ? 'fit' : 'fill';
-    setState(() => _fitMode = newMode);
-    await _controlChannel.invokeMethod('setFitMode', {'mode': newMode});
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Stack(
-        children: [
-          // Background Gradient Mesh
-          Positioned.fill(
-            child: Container(
-              decoration: const BoxDecoration(
-                gradient: RadialGradient(
-                  center: Alignment(0.0, -0.6),
-                  radius: 1.2,
-                  colors: [
-                    Color(0xFF161C2C),
-                    Color(0xFF0C0E14),
-                  ],
+      backgroundColor: const Color(0xFF111420),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Column(
+            children: [
+              // 1. Top Segmented Icon Bar (Matching ui.webp)
+              _buildTopSegmentedBar(),
+              const SizedBox(height: 12),
+
+              // 2. Main Content Card (Matching ui.webp inspector)
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      _buildCameraSettingsCard(),
+                      const SizedBox(height: 12),
+
+                      if (_currentSource == CameraSourceType.image ||
+                          _currentSource == CameraSourceType.video ||
+                          _currentSource == CameraSourceType.qrCode ||
+                          _currentSource == CameraSourceType.passthrough)
+                        _buildContextualCard(),
+                      if (_currentSource == CameraSourceType.image ||
+                          _currentSource == CameraSourceType.video ||
+                          _currentSource == CameraSourceType.qrCode ||
+                          _currentSource == CameraSourceType.passthrough)
+                        const SizedBox(height: 12),
+
+                      // 3. Bottom Simulator Camera Card (Orange arrow in ui.webp)
+                      _buildSimulatorCameraBottomCard(),
+                    ],
+                  ),
                 ),
               ),
-            ),
+            ],
           ),
+        ),
+      ),
+    );
+  }
 
-          // Compact Companion Layout
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              child: Column(
+  // --- WIDGET BUILDERS ---
+
+  Widget _buildTopSegmentedBar() {
+    return Container(
+      height: 40,
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1B1E2E),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFF282D42)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _buildTabIcon(0, CupertinoIcons.camera_fill),
+          _buildTabIcon(1, CupertinoIcons.device_phone_portrait),
+          _buildTabIcon(2, CupertinoIcons.command),
+          _buildTabIcon(3, CupertinoIcons.slider_horizontal_3),
+          _buildTabIcon(4, CupertinoIcons.ellipsis),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTabIcon(int index, IconData icon) {
+    final isSelected = _selectedTab == index;
+    return GestureDetector(
+      onTap: () => setState(() => _selectedTab = index),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF2D3748) : Colors.transparent,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 15,
+              color: isSelected
+                  ? const Color(0xFF60A5FA)
+                  : const Color(0xFF718096),
+            ),
+            if (isSelected)
+              Container(
+                margin: const EdgeInsets.only(top: 2),
+                width: 14,
+                height: 2,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF60A5FA),
+                  borderRadius: BorderRadius.circular(1),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCameraSettingsCard() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF171A27),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF262B3F)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Live Mini Viewfinder
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              height: 190,
+              width: double.infinity,
+              color: const Color(0xFF08090E),
+              child: Stack(
+                alignment: Alignment.center,
                 children: [
-                  const SizedBox(height: 8),
+                  if (_previewFrame != null)
+                    Image.memory(
+                      _previewFrame!,
+                      gaplessPlayback: true,
+                      fit: _fitMode == 'fit' ? BoxFit.contain : BoxFit.cover,
+                    )
+                  else
+                    Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          _currentSource.icon,
+                          size: 30,
+                          color: const Color(0xFF60A5FA),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _currentSource.title,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFFCBD5E1),
+                          ),
+                        ),
+                      ],
+                    ),
 
-                  // Compact Header
-                  _buildHeaderBar(),
-                  const SizedBox(height: 8),
-
-                  // Simulator Auto-Detect Status Pill
-                  _buildSimulatorStatusPill(),
-                  const SizedBox(height: 10),
-
-                  // Main Viewfinder
-                  Expanded(
-                    child: Center(
-                      child: _buildCentralViewfinder(),
+                  // LIVE badge
+                  Positioned(
+                    top: 8,
+                    left: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.65),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Row(
+                        children: const [
+                          Icon(
+                            CupertinoIcons.circle_fill,
+                            size: 6,
+                            color: Color(0xFFEF4444),
+                          ),
+                          SizedBox(width: 4),
+                          Text(
+                            'LIVE 1080×1920',
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.3,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 8),
 
-                  // Contextual Controls (Dropdown / Pickers / QR Field)
-                  _buildContextualControlsBar(),
-                  const SizedBox(height: 8),
-
-                  // Bottom Dock (Source Selector)
-                  _buildFloatingDock(),
-                  const SizedBox(height: 10),
+                  // Feed mode badge
+                  Positioned(
+                    bottom: 8,
+                    left: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.65),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        'Front & Back Synced',
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF10B981),
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
           ),
-        ],
-      ),
-    );
-  }
+          const SizedBox(height: 14),
 
-  Widget _buildHeaderBar() {
-    return Row(
-      children: [
-        // App Title
-        _buildGlassPill(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 18,
-                height: 18,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF3B82F6), Color(0xFF6366F1)],
-                  ),
-                  borderRadius: BorderRadius.circular(5),
-                ),
-                child: const Icon(
-                  CupertinoIcons.camera_fill,
-                  size: 11,
-                  color: Colors.white,
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Text(
-                'OpenSimCam',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.2,
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        const Spacer(),
-
-        // Aspect Fill / Fit Switch
-        GestureDetector(
-          onTap: _toggleFitMode,
-          child: _buildGlassPill(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  _fitMode == 'fill'
-                      ? CupertinoIcons.arrow_up_left_arrow_down_right
-                      : CupertinoIcons.viewfinder,
-                  size: 12,
-                  color: const Color(0xFF60A5FA),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  _fitMode == 'fill' ? 'Fill' : 'Fit',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFFE2E8F0),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _relaunchApp(String bundleId, String udid) async {
-    try {
-      await _controlChannel.invokeMethod('relaunchApp', {
-        'bundleId': bundleId,
-        'udid': udid,
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Relaunched $bundleId with camera hooked!'),
-            backgroundColor: const Color(0xFF10B981),
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
-      debugPrint('Error relaunching app: $e');
-    }
-  }
-
-  Widget _buildSimulatorStatusPill() {
-    final hasBootedSim = _bootedSimulators.isNotEmpty;
-    final firstSim = hasBootedSim ? _bootedSimulators.first : null;
-    final simName = firstSim?['name'];
-    final runningApp = firstSim?['runningAppBundle']?.toString();
-    final targetBundle = _connectedAppBundle ?? runningApp;
-
-    return _buildGlassPill(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-      child: Row(
-        children: [
-          Container(
-            width: 7,
-            height: 7,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: hasBootedSim
-                  ? const Color(0xFF10B981)
-                  : const Color(0xFF9CA3AF),
-              boxShadow: hasBootedSim
-                  ? [
-                      BoxShadow(
-                        color: const Color(0xFF10B981).withOpacity(0.5),
-                        blurRadius: 5,
-                        spreadRadius: 1,
-                      )
-                    ]
-                  : null,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              hasBootedSim
-                  ? 'Sim: $simName (Auto-Synced)'
-                  : 'Waiting for iOS Simulator...',
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
-                color: hasBootedSim ? Colors.white : const Color(0xFF9CA3AF),
-              ),
-            ),
-          ),
-          if (targetBundle != null && firstSim != null) ...[
-            const SizedBox(width: 6),
-            GestureDetector(
-              onTap: () => _relaunchApp(targetBundle, firstSim['udid']),
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF10B981).withOpacity(0.18),
-                  borderRadius: BorderRadius.circular(5),
-                  border: Border.all(
-                    color: const Color(0xFF10B981).withOpacity(0.35),
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      CupertinoIcons.arrow_2_circlepath,
-                      size: 9,
-                      color: Color(0xFF6EE7B7),
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      targetBundle.split('.').last,
-                      style: const TextStyle(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF6EE7B7),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCentralViewfinder() {
-    final isPassthroughDenied =
-        _currentSource == CameraSourceType.passthrough &&
-            !_hasScreenCapturePermission;
-
-    return AspectRatio(
-      aspectRatio: 9 / 16,
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.5),
-              blurRadius: 24,
-              offset: const Offset(0, 8),
-            ),
-            BoxShadow(
-              color: const Color(0xFF3B82F6).withOpacity(0.06),
-              blurRadius: 30,
-              spreadRadius: 1,
-            ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(20),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              // Dark Frame Backdrop
-              Container(color: const Color(0xFF07080D)),
-
-              // Live Preview Feed
-              if (_previewFrame != null && !isPassthroughDenied)
-                Image.memory(
-                  _previewFrame!,
-                  gaplessPlayback: true,
-                  fit: _fitMode == 'fill' ? BoxFit.cover : BoxFit.contain,
-                )
-              else if (!isPassthroughDenied)
-                Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.white.withOpacity(0.04),
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.08),
-                        ),
-                      ),
-                      child: Icon(
-                        _currentSource.icon,
-                        size: 26,
-                        color: const Color(0xFF60A5FA),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      _currentSource.title,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFFE2E8F0),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      'Streaming to Simulator camera',
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: Color(0xFF64748B),
-                      ),
-                    ),
-                  ],
-                ),
-
-              // Screen Recording Permission Request Overlay
-              if (isPassthroughDenied)
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  color: Colors.black.withOpacity(0.85),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF59E0B).withOpacity(0.15),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          CupertinoIcons.lock_shield_fill,
-                          size: 32,
-                          color: Color(0xFFFBBF24),
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      const Text(
-                        'Screen Recording Required',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'To capture what is behind the Simulator, grant Screen Recording access in macOS System Settings.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Color(0xFF94A3B8),
-                          height: 1.3,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF2563EB),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 14, vertical: 8),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                        onPressed: _openSystemSettings,
-                        icon: const Icon(CupertinoIcons.settings, size: 13),
-                        label: const Text(
-                          'Open System Settings',
-                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextButton(
-                        onPressed: () => _activateSource(CameraSourceType.passthrough),
-                        child: const Text(
-                          'I Granted It (Retry)',
-                          style: TextStyle(fontSize: 11, color: Color(0xFF60A5FA)),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-              // Glass Live Badge (Top-Left)
-              Positioned(
-                top: 10,
-                left: 10,
-                child: _buildGlassPill(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 6,
-                        height: 6,
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Color(0xFFEF4444),
-                        ),
-                      ),
-                      const SizedBox(width: 5),
-                      Text(
-                        'LIVE',
-                        style: TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.5,
-                          color: Colors.white.withOpacity(0.9),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              // Source Badge (Bottom-Left)
-              Positioned(
-                bottom: 10,
-                left: 10,
-                child: _buildGlassPill(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        _currentSource.icon,
-                        size: 11,
-                        color: const Color(0xFF93C5FD),
-                      ),
-                      const SizedBox(width: 5),
-                      Text(
-                        _currentSource.title,
-                        style: const TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFFE2E8F0),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildContextualControlsBar() {
-    Widget? content;
-
-    if (_currentSource == CameraSourceType.webcam) {
-      content = Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text(
-            'Camera:',
-            style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-          ),
-          const SizedBox(width: 8),
-          DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              value: _selectedCameraId,
-              dropdownColor: const Color(0xFF1E2436),
-              borderRadius: BorderRadius.circular(8),
-              style: const TextStyle(fontSize: 11, color: Colors.white),
-              items: _availableCameras.map((c) {
-                return DropdownMenuItem<String>(
-                  value: c['id'],
-                  child: Text(c['name'] ?? 'Camera'),
-                );
-              }).toList(),
-              onChanged: (id) {
-                setState(() => _selectedCameraId = id);
-                _activateSource(CameraSourceType.webcam);
-              },
-            ),
-          ),
-        ],
-      );
-    } else if (_currentSource == CameraSourceType.image) {
-      final name = _customImagePath != null
-          ? _customImagePath!.split('/').last
-          : 'No file';
-      content = Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 140),
-            child: Text(
-              name,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-            ),
-          ),
-          const SizedBox(width: 8),
-          _buildActionBtn('Choose Image', CupertinoIcons.photo, _pickImageFile),
-        ],
-      );
-    } else if (_currentSource == CameraSourceType.video) {
-      final name = _customVideoPath != null
-          ? _customVideoPath!.split('/').last
-          : 'No file';
-      content = Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 140),
-            child: Text(
-              name,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-            ),
-          ),
-          const SizedBox(width: 8),
-          _buildActionBtn('Choose Video', CupertinoIcons.film, _pickVideoFile),
-        ],
-      );
-    } else if (_currentSource == CameraSourceType.qrCode) {
-      content = Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox(
-            width: 170,
-            child: CupertinoTextField(
-              controller: _qrController,
-              placeholder: 'URL or barcode text...',
-              style: const TextStyle(fontSize: 11, color: Colors.white),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.06),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: Colors.white.withOpacity(0.1)),
-              ),
-              onSubmitted: (_) => _activateSource(CameraSourceType.qrCode),
-            ),
-          ),
-          const SizedBox(width: 6),
-          _buildActionBtn('Apply', CupertinoIcons.arrow_clockwise, () {
-            _activateSource(CameraSourceType.qrCode);
-          }),
-        ],
-      );
-    }
-
-    if (content == null) {
-      return const SizedBox.shrink();
-    }
-
-    return _buildGlassPill(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: content,
-    );
-  }
-
-  Widget _buildActionBtn(String label, IconData icon, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-        decoration: BoxDecoration(
-          color: const Color(0xFF3B82F6).withOpacity(0.2),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: const Color(0xFF3B82F6).withOpacity(0.4)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 11, color: const Color(0xFF60A5FA)),
-            const SizedBox(width: 5),
-            Text(
-              label,
-              style: const TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF93C5FD),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFloatingDock() {
-    return _buildGlassPill(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: CameraSourceType.values.map((src) {
-            final isSelected = _currentSource == src;
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 2),
-              child: Tooltip(
-                message: src.tooltip,
-                child: GestureDetector(
-                  onTap: () async {
-                    if (src == CameraSourceType.image && _customImagePath == null) {
-                      await _pickImageFile();
-                    } else if (src == CameraSourceType.video &&
-                        _customVideoPath == null) {
-                      await _pickVideoFile();
-                    } else {
-                      await _activateSource(src);
-                    }
-                  },
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: isSelected
-                          ? const Color(0xFF3B82F6).withOpacity(0.25)
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: isSelected
-                            ? const Color(0xFF3B82F6).withOpacity(0.5)
-                            : Colors.transparent,
-                      ),
-                    ),
+          // Setting Row: Source
+          _buildSettingRow(
+            label: 'Source',
+            control: DropdownButtonHideUnderline(
+              child: DropdownButton<CameraSourceType>(
+                value: _currentSource,
+                dropdownColor: const Color(0xFF1E2235),
+                borderRadius: BorderRadius.circular(10),
+                isDense: true,
+                style: const TextStyle(fontSize: 12, color: Colors.white),
+                items: CameraSourceType.values.map((src) {
+                  return DropdownMenuItem<CameraSourceType>(
+                    value: src,
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(
                           src.icon,
-                          size: 13,
-                          color: isSelected
-                              ? const Color(0xFF60A5FA)
-                              : const Color(0xFF94A3B8),
+                          size: 12,
+                          color: const Color(0xFF60A5FA),
                         ),
-                        const SizedBox(width: 5),
-                        Text(
-                          src.title,
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight:
-                                isSelected ? FontWeight.w600 : FontWeight.w500,
-                            color: isSelected
-                                ? Colors.white
-                                : const Color(0xFF94A3B8),
-                          ),
-                        ),
+                        const SizedBox(width: 6),
+                        Text(src.title),
                       ],
                     ),
-                  ),
+                  );
+                }).toList(),
+                onChanged: (val) {
+                  if (val != null) _activateSource(val);
+                },
+              ),
+            ),
+          ),
+
+          const Divider(color: Color(0xFF222639), height: 16),
+
+          // If Webcam selected, allow picking Mac Camera
+          if (_currentSource == CameraSourceType.webcam &&
+              _availableCameras.isNotEmpty) ...[
+            _buildSettingRow(
+              label: 'Mac Camera',
+              control: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: _selectedCameraId,
+                  dropdownColor: const Color(0xFF1E2235),
+                  borderRadius: BorderRadius.circular(10),
+                  isDense: true,
+                  style: const TextStyle(fontSize: 12, color: Colors.white),
+                  items: _availableCameras.map((c) {
+                    return DropdownMenuItem<String>(
+                      value: c['id'],
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 150),
+                        child: Text(
+                          c['name'] ?? 'Camera',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: (val) {
+                    if (val != null) {
+                      setState(() => _selectedCameraId = val);
+                      _activateSource(CameraSourceType.webcam);
+                    }
+                  },
                 ),
               ),
-            );
-          }).toList(),
-        ),
+            ),
+            const Divider(color: Color(0xFF222639), height: 16),
+          ],
+
+          // Setting Row: Ratio (Letterbox Fit, Fill, Stretch, Rotate 90)
+          _buildSettingRow(
+            label: 'Aspect Ratio',
+            control: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: _fitMode,
+                dropdownColor: const Color(0xFF1E2235),
+                borderRadius: BorderRadius.circular(10),
+                isDense: true,
+                style: const TextStyle(fontSize: 12, color: Colors.white),
+                items: const [
+                  DropdownMenuItem(value: 'fit', child: Text('Fit (Letterbox)')),
+                  DropdownMenuItem(
+                    value: 'fill',
+                    child: Text('Fill (Cover 9:16)'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'stretch',
+                    child: Text('Stretch (Full)'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'rotate90',
+                    child: Text('Rotate 90° CW'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'rotate180',
+                    child: Text('Rotate 180°'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'rotate270',
+                    child: Text('Rotate 270° CW'),
+                  ),
+                ],
+                onChanged: (val) {
+                  if (val != null) _setFitMode(val);
+                },
+              ),
+            ),
+          ),
+
+          const Divider(color: Color(0xFF222639), height: 16),
+
+          // Setting Row: Dual Camera Stream (Front & Back)
+          _buildSettingRow(
+            label: 'Front & Back Cameras',
+            control: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: const [
+                Icon(
+                  CupertinoIcons.checkmark_alt_circle_fill,
+                  size: 14,
+                  color: Color(0xFF10B981),
+                ),
+                SizedBox(width: 4),
+                Text(
+                  'Dual Active',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF10B981),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildGlassPill({
-    required Widget child,
-    EdgeInsetsGeometry padding = const EdgeInsets.all(10),
-  }) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(14),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.045),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: Colors.white.withOpacity(0.08),
-              width: 1,
+  Widget _buildContextualCard() {
+    Widget content = const SizedBox.shrink();
+
+    if (_currentSource == CameraSourceType.image) {
+      final name = _customImagePath != null
+          ? _customImagePath!.split('/').last
+          : 'No file selected';
+      content = Row(
+        children: [
+          Expanded(
+            child: Text(
+              name,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
             ),
           ),
-          child: child,
-        ),
+          const SizedBox(width: 8),
+          CupertinoButton(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            color: const Color(0xFF2D3748),
+            borderRadius: BorderRadius.circular(6),
+            onPressed: _pickImageFile,
+            child: const Text('Browse', style: TextStyle(fontSize: 11)),
+          ),
+        ],
+      );
+    } else if (_currentSource == CameraSourceType.video) {
+      final name = _customVideoPath != null
+          ? _customVideoPath!.split('/').last
+          : 'No file selected';
+      content = Row(
+        children: [
+          Expanded(
+            child: Text(
+              name,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
+            ),
+          ),
+          const SizedBox(width: 8),
+          CupertinoButton(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            color: const Color(0xFF2D3748),
+            borderRadius: BorderRadius.circular(6),
+            onPressed: _pickVideoFile,
+            child: const Text('Browse', style: TextStyle(fontSize: 11)),
+          ),
+        ],
+      );
+    } else if (_currentSource == CameraSourceType.qrCode) {
+      content = Row(
+        children: [
+          Expanded(
+            child: CupertinoTextField(
+              controller: _qrController,
+              placeholder: 'Payload URL or text...',
+              style: const TextStyle(fontSize: 11, color: Colors.white),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E2235),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              onSubmitted: (_) => _activateSource(CameraSourceType.qrCode),
+            ),
+          ),
+          const SizedBox(width: 8),
+          CupertinoButton(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            color: const Color(0xFF2563EB),
+            borderRadius: BorderRadius.circular(6),
+            onPressed: () => _activateSource(CameraSourceType.qrCode),
+            child: const Text('Apply', style: TextStyle(fontSize: 11)),
+          ),
+        ],
+      );
+    } else if (_currentSource == CameraSourceType.passthrough) {
+      content = Row(
+        children: [
+          const Icon(
+            CupertinoIcons.macwindow,
+            size: 14,
+            color: Color(0xFF60A5FA),
+          ),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              'Capturing screen behind Simulator',
+              style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
+            ),
+          ),
+          if (!_hasScreenCapturePermission)
+            CupertinoButton(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              color: const Color(0xFFDC2626),
+              borderRadius: BorderRadius.circular(6),
+              onPressed: () async {
+                await _controlChannel.invokeMethod(
+                  'openSystemPreferencesScreenCapture',
+                );
+              },
+              child: const Text('Grant Access', style: TextStyle(fontSize: 10)),
+            ),
+        ],
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF171A27),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF262B3F)),
       ),
+      child: content,
+    );
+  }
+
+  // Bottom Card matching orange arrow in ui.webp
+  Widget _buildSimulatorCameraBottomCard() {
+    final hasBootedSim = _bootedSimulators.isNotEmpty;
+    final firstSim = hasBootedSim ? _bootedSimulators.first : null;
+    final simName = firstSim?['name'] ?? 'No Simulator';
+    final runningApp = firstSim?['runningAppBundle']?.toString();
+    final targetBundle = _connectedAppBundle ?? runningApp;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF171A27),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF262B3F)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                'Simulator Camera',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFFE2E8F0),
+                ),
+              ),
+              const Spacer(),
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: hasBootedSim
+                      ? const Color(0xFF10B981)
+                      : const Color(0xFFEF4444),
+                  boxShadow: hasBootedSim
+                      ? [
+                          BoxShadow(
+                            color: const Color(
+                              0xFF10B981,
+                            ).withValues(alpha: 0.6),
+                            blurRadius: 6,
+                          ),
+                        ]
+                      : null,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+
+          // Dropdown selector matching ui.webp
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: const Color(0xFF22273B),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFF2D354E)),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<CameraSourceType>(
+                isExpanded: true,
+                value: _currentSource,
+                dropdownColor: const Color(0xFF1E2235),
+                style: const TextStyle(fontSize: 12, color: Colors.white),
+                items: CameraSourceType.values.map((src) {
+                  return DropdownMenuItem<CameraSourceType>(
+                    value: src,
+                    child: Text(src.title),
+                  );
+                }).toList(),
+                onChanged: (val) {
+                  if (val != null) _activateSource(val);
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+
+          // Target App Status & Relaunch Button
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Sim: $simName',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: Color(0xFF718096),
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (targetBundle != null)
+                      Text(
+                        'App: ${targetBundle.split('.').last}',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF6EE7B7),
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                  ],
+                ),
+              ),
+              if (targetBundle != null && firstSim != null)
+                CupertinoButton(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  color: const Color(0xFF2D3748),
+                  borderRadius: BorderRadius.circular(8),
+                  onPressed: () => _relaunchApp(targetBundle, firstSim['udid']),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      Icon(
+                        CupertinoIcons.arrow_2_circlepath,
+                        size: 11,
+                        color: Color(0xFF60A5FA),
+                      ),
+                      SizedBox(width: 4),
+                      Text(
+                        'Relaunch App',
+                        style: TextStyle(fontSize: 11, color: Colors.white),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSettingRow({required String label, required Widget control}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 12,
+            color: Color(0xFFCBD5E1),
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        control,
+      ],
     );
   }
 }
