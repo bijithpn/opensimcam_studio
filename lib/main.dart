@@ -63,6 +63,11 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
   int _selectedTab = 0; // 0: Camera, 1: Device, 2: Actions, 3: Settings
   CameraSourceType _currentSource = CameraSourceType.demoVideo;
   String _fitMode = 'fill'; // Default to "fill" to provide full-screen portrait camera feed!
+  double _zoom = 1.0;
+  double _offsetX = 0.0;
+  double _offsetY = 0.0;
+  int _rotation = 0; // 0, 90, 180, 270
+  bool _mirror = false;
   StreamSubscription? _previewSubscription;
   Timer? _statusPollTimer;
   Uint8List? _previewFrame;
@@ -259,7 +264,34 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
 
   Future<void> _setFitMode(String mode) async {
     setState(() => _fitMode = mode);
-    await _controlChannel.invokeMethod('setFitMode', {'mode': mode});
+    await _updateTransformSettings();
+  }
+
+  Future<void> _updateTransformSettings() async {
+    try {
+      await _controlChannel.invokeMethod('updateTransformSettings', {
+        'fitMode': _fitMode,
+        'zoom': _zoom,
+        'offsetX': _offsetX,
+        'offsetY': _offsetY,
+        'rotation': _rotation,
+        'mirror': _mirror,
+      });
+    } catch (e) {
+      debugPrint('Error updating transform settings: $e');
+    }
+  }
+
+  void _resetTransform() {
+    setState(() {
+      _zoom = 1.0;
+      _offsetX = 0.0;
+      _offsetY = 0.0;
+      _rotation = 0;
+      _mirror = false;
+      _fitMode = 'fill';
+    });
+    _updateTransformSettings();
   }
 
   Future<void> _relaunchApp(String bundleId, String udid) async {
@@ -327,6 +359,9 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
                   child: Column(
                     children: [
                       _buildCameraSettingsCard(),
+                      const SizedBox(height: 12),
+
+                      _buildAdjustViewCard(),
                       const SizedBox(height: 12),
 
                       if (_currentSource == CameraSourceType.image ||
@@ -438,7 +473,7 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
                     Image.memory(
                       _previewFrame!,
                       gaplessPlayback: true,
-                      fit: _fitMode == 'fit' ? BoxFit.contain : BoxFit.cover,
+                      fit: BoxFit.contain,
                     )
                   else
                     Column(
@@ -491,6 +526,30 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
                             ),
                           ),
                         ],
+                      ),
+                    ),
+                  ),
+
+                  // Zoom level badge
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.65),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        '${_zoom.toStringAsFixed(1)}x',
+                        style: const TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF60A5FA),
+                        ),
                       ),
                     ),
                   ),
@@ -660,6 +719,269 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
                 ),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAdjustViewCard() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF171A27),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF262B3F)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: const [
+                  Icon(
+                    CupertinoIcons.slider_horizontal_3,
+                    size: 14,
+                    color: Color(0xFF60A5FA),
+                  ),
+                  SizedBox(width: 6),
+                  Text(
+                    'Framing & Adjustments',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+              CupertinoButton(
+                padding: EdgeInsets.zero,
+                minSize: 0,
+                onPressed: _resetTransform,
+                child: const Text(
+                  'Reset',
+                  style: TextStyle(fontSize: 11, color: Color(0xFF60A5FA)),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // Zoom control
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Zoom Level',
+                style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF222639),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  '${_zoom.toStringAsFixed(2)}x',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF60A5FA),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 3,
+              activeTrackColor: const Color(0xFF3B82F6),
+              inactiveTrackColor: const Color(0xFF252A3D),
+              thumbColor: Colors.white,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+            ),
+            child: Slider(
+              value: _zoom,
+              min: 0.5,
+              max: 3.0,
+              onChanged: (val) {
+                setState(() => _zoom = val);
+                _updateTransformSettings();
+              },
+            ),
+          ),
+
+          // Zoom quick presets
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [0.75, 1.0, 1.25, 1.5, 2.0].map((preset) {
+              final isSelected = (_zoom - preset).abs() < 0.05;
+              return GestureDetector(
+                onTap: () {
+                  setState(() => _zoom = preset);
+                  _updateTransformSettings();
+                },
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? const Color(0xFF3B82F6)
+                        : const Color(0xFF1E2235),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    '${preset}x',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color:
+                          isSelected ? Colors.white : const Color(0xFF94A3B8),
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+
+          const Divider(color: Color(0xFF222639), height: 16),
+
+          // Horizontal Pan
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Pan Horizontal (X)',
+                style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
+              ),
+              Text(
+                '${(_offsetX * 100).toInt()}%',
+                style: const TextStyle(fontSize: 11, color: Colors.white70),
+              ),
+            ],
+          ),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 3,
+              activeTrackColor: const Color(0xFF3B82F6),
+              inactiveTrackColor: const Color(0xFF252A3D),
+              thumbColor: Colors.white,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+            ),
+            child: Slider(
+              value: _offsetX,
+              min: -1.0,
+              max: 1.0,
+              onChanged: (val) {
+                setState(() => _offsetX = val);
+                _updateTransformSettings();
+              },
+            ),
+          ),
+
+          // Vertical Pan
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Pan Vertical (Y)',
+                style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
+              ),
+              Text(
+                '${(_offsetY * 100).toInt()}%',
+                style: const TextStyle(fontSize: 11, color: Colors.white70),
+              ),
+            ],
+          ),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 3,
+              activeTrackColor: const Color(0xFF3B82F6),
+              inactiveTrackColor: const Color(0xFF252A3D),
+              thumbColor: Colors.white,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+            ),
+            child: Slider(
+              value: _offsetY,
+              min: -1.0,
+              max: 1.0,
+              onChanged: (val) {
+                setState(() => _offsetY = val);
+                _updateTransformSettings();
+              },
+            ),
+          ),
+
+          const Divider(color: Color(0xFF222639), height: 16),
+
+          // Rotation & Mirror
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Rotation',
+                style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
+              ),
+              Row(
+                children: [0, 90, 180, 270].map((deg) {
+                  final isSelected = _rotation == deg;
+                  return GestureDetector(
+                    onTap: () {
+                      setState(() => _rotation = deg);
+                      _updateTransformSettings();
+                    },
+                    child: Container(
+                      margin: const EdgeInsets.only(left: 4),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? const Color(0xFF3B82F6)
+                            : const Color(0xFF1E2235),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        '$deg°',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: isSelected
+                              ? Colors.white
+                              : const Color(0xFF94A3B8),
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 10),
+
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Mirror Camera (Selfie)',
+                style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
+              ),
+              Transform.scale(
+                scale: 0.75,
+                child: CupertinoSwitch(
+                  value: _mirror,
+                  activeColor: const Color(0xFF3B82F6),
+                  onChanged: (val) {
+                    setState(() => _mirror = val);
+                    _updateTransformSettings();
+                  },
+                ),
+              ),
+            ],
           ),
         ],
       ),

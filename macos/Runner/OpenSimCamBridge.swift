@@ -96,6 +96,29 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
             server.setFitMode(mode)
             result(true)
             
+        case "updateTransformSettings":
+            guard let args = call.arguments as? [String: Any] else {
+                result(false)
+                return
+            }
+            let fitMode = args["fitMode"] as? String ?? "fill"
+            let zoom = CGFloat(args["zoom"] as? Double ?? 1.0)
+            let offsetX = CGFloat(args["offsetX"] as? Double ?? 0.0)
+            let offsetY = CGFloat(args["offsetY"] as? Double ?? 0.0)
+            let rotation = args["rotation"] as? Int ?? 0
+            let mirror = args["mirror"] as? Bool ?? false
+            
+            let config = TransformConfig(
+                fitMode: fitMode,
+                zoom: zoom,
+                offsetX: offsetX,
+                offsetY: offsetY,
+                rotation: rotation,
+                mirror: mirror
+            )
+            server.updateTransformConfig(config)
+            result(true)
+            
         case "getCameras":
             var deviceTypes: [AVCaptureDevice.DeviceType] = [.builtInWideAngleCamera]
             if #available(macOS 14.0, *) {

@@ -17,7 +17,11 @@ public final class ProcessChannel {
     
     public var isCameraActive = false
     public var activeCamera = "back"
-    public var fitMode = "fit"
+    public var transformConfig = TransformConfig()
+    public var fitMode: String {
+        get { transformConfig.fitMode }
+        set { transformConfig.fitMode = newValue }
+    }
     private var currentSlotIndex = 0
     
     public init(simUDID: String, bundleID: String, channelPath: String) {
@@ -170,7 +174,7 @@ public final class ProcessChannel {
         
         // Feed back camera
         if let bShm = backShm {
-            bShm.writePixelBuffer(pixelBuffer, slot: currentSlotIndex, fitMode: fitMode)
+            bShm.writePixelBuffer(pixelBuffer, slot: currentSlotIndex, config: transformConfig)
             let backMsg: [String: Any] = [
                 "type": "frame",
                 "camera": "back",
@@ -182,7 +186,7 @@ public final class ProcessChannel {
         
         // Feed front camera
         if let fShm = frontShm {
-            fShm.writePixelBuffer(pixelBuffer, slot: currentSlotIndex, fitMode: fitMode)
+            fShm.writePixelBuffer(pixelBuffer, slot: currentSlotIndex, config: transformConfig)
             let frontMsg: [String: Any] = [
                 "type": "frame",
                 "camera": "front",
@@ -198,7 +202,7 @@ public final class ProcessChannel {
         
         // Feed back camera
         if let bShm = backShm {
-            bShm.writeCGImage(image, slot: currentSlotIndex, fitMode: fitMode)
+            bShm.writeCGImage(image, slot: currentSlotIndex, config: transformConfig)
             let backMsg: [String: Any] = [
                 "type": "frame",
                 "camera": "back",
@@ -210,7 +214,7 @@ public final class ProcessChannel {
         
         // Feed front camera
         if let fShm = frontShm {
-            fShm.writeCGImage(image, slot: currentSlotIndex, fitMode: fitMode)
+            fShm.writeCGImage(image, slot: currentSlotIndex, config: transformConfig)
             let frontMsg: [String: Any] = [
                 "type": "frame",
                 "camera": "front",

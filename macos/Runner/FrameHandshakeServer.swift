@@ -30,7 +30,11 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
     private let previewQueue = DispatchQueue(label: "opensimcam.preview.queue", qos: .userInteractive)
     private var isGeneratingPreview = false
     private var lastPreviewTime: CFAbsoluteTime = 0
-    public var currentFitMode = "fill"
+    public var currentTransformConfig = TransformConfig()
+    public var currentFitMode: String {
+        get { currentTransformConfig.fitMode }
+        set { currentTransformConfig.fitMode = newValue }
+    }
     
     public var currentMediaSource: MediaSource? {
         didSet {
@@ -124,7 +128,7 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
         }
         
         let channel = ProcessChannel(simUDID: simUDID, bundleID: bundleID, channelPath: channelPath)
-        channel.fitMode = currentFitMode
+        channel.transformConfig = currentTransformConfig
         if channel.connect() {
             activeChannels.removeAll { $0.channelPath == channelPath }
             activeChannels.append(channel)
@@ -158,14 +162,18 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
             }
             
             if let ci = ci {
+                let config = self.currentTransformConfig
                 previewQueue.async { [weak self] in
                     defer { self?.isGeneratingPreview = false }
                     guard let self = self else { return }
                     
-                    // Downscale preview to standard height (720px) to maximize preview fluidity
-                    let targetH: CGFloat = 720.0
-                    let scale = min(1.0, targetH / ci.extent.height)
-                    let previewCI = (scale < 1.0) ? ci.transformed(by: CGAffineTransform(scaleX: scale, y: scale)) : ci
+                    // Render through exact same transform pipeline as simulator
+                    let transformed = SharedMemoryBuffer.transformToPortraitDisplay(ci, config: config)
+                    
+                    // Downscale preview to standard height (480px) to maximize preview fluidity
+                    let targetH: CGFloat = 480.0
+                    let scale = min(1.0, targetH / transformed.extent.height)
+                    let previewCI = (scale < 1.0) ? transformed.transformed(by: CGAffineTransform(scaleX: scale, y: scale)) : transformed
                     
                     if let jpeg = self.ciContext.jpegRepresentation(
                         of: previewCI,
@@ -190,9 +198,16 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
     }
     
     public func setFitMode(_ mode: String) {
-        currentFitMode = mode
+        currentTransformConfig.fitMode = mode
         for ch in activeChannels {
-            ch.fitMode = mode
+            ch.transformConfig.fitMode = mode
+        }
+    }
+    
+    public func updateTransformConfig(_ config: TransformConfig) {
+        currentTransformConfig = config
+        for ch in activeChannels {
+            ch.transformConfig = config
         }
     }
 }
