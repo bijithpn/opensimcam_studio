@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
 
 abstract final class StudioColors {
-  static const canvas = Colors.transparent;
+  // Keep an opaque fallback beneath glass materials. A fully transparent
+  // Flutter surface can resolve to black before macOS vibrancy is available.
+  static const canvas = Color(0xF018191B);
   static const panel = Color(0xCC202124);
   static const panelRaised = Color(0xFF2B2C2F);
   static const border = Color(0x26FFFFFF);
@@ -30,7 +32,7 @@ abstract final class StudioTheme {
 
 abstract final class StudioGlass {
   static const settings = LiquidGlassSettings(
-    glassColor: Color(0x1220242B),
+    glassColor: Color(0x2820242B),
     thickness: 12,
     blur: 8,
     chromaticAberration: 0,

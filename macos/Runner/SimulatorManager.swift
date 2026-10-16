@@ -9,6 +9,7 @@ public struct BootedSimulator {
 
 public final class SimulatorManager {
     public static let shared = SimulatorManager()
+    public static let backgroundQueue = DispatchQueue(label: "com.opensimcam.simulator", qos: .utility)
     private static var autoTimer: DispatchSourceTimer?
     private static var injectedSimUDIDs = Set<String>()
     
@@ -57,135 +58,140 @@ public final class SimulatorManager {
     }
     
     public static func getRunningApp(simUDID: String) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        process.arguments = ["simctl", "spawn", simUDID, "launchctl", "list"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        do {
-            try process.run()
-            process.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard let output = String(data: data, encoding: .utf8) else { return nil }
-            for line in output.components(separatedBy: "\n") {
-                if line.contains("UIKitApplication:") {
-                    let parts = line.components(separatedBy: "UIKitApplication:")
-                    if parts.count >= 2 {
-                        let sub = parts[1]
-                        let bundle = sub.components(separatedBy: "[").first ?? sub
-                        let trimmed = bundle.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !trimmed.hasPrefix("com.apple.") {
-                            return trimmed
-                        }
-                    }
-                }
-            }
-        } catch {
-            return nil
-        }
-        return nil
+        let (status, output) = runXcrun(["simctl", "spawn", simUDID, "launchctl", "list"])
+        guard status == 0 else { return nil }
+
+        // launchctl output has changed formatting across simulator runtimes.
+        // Read the UIKitApplication label rather than relying on fixed columns.
+        let pattern = #"UIKitApplication:([^\[\s]+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let nsOutput = output as NSString
+        let matches = regex.matches(in: output, range: NSRange(location: 0, length: nsOutput.length))
+        return matches.reversed().compactMap { match -> String? in
+            guard match.numberOfRanges > 1 else { return nil }
+            let bundle = nsOutput.substring(with: match.range(at: 1))
+            return bundle.hasPrefix("com.apple.") ? nil : bundle
+        }.first
     }
     
-    public static func getBootedSimulators() -> [BootedSimulator] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        process.arguments = ["simctl", "list", "devices", "booted", "-j"]
-        
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        
-        do {
-            try process.run()
-            process.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+    public static func getBootedSimulators(includeRunningApps: Bool = true) -> [BootedSimulator] {
+        let (status, output) = runXcrun(["simctl", "list", "devices", "booted", "-j"])
+        guard status == 0, let data = output.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let devicesDict = json["devices"] as? [String: [[String: Any]]] else {
-                return []
-            }
-            
-            var result: [BootedSimulator] = []
-            for (_, list) in devicesDict {
-                for dev in list {
-                    if let state = dev["state"] as? String, state == "Booted",
-                       let name = dev["name"] as? String,
-                       let udid = dev["udid"] as? String {
-                        let injected = injectedSimUDIDs.contains(udid)
-                        let runningApp = getRunningApp(simUDID: udid)
-                        result.append(BootedSimulator(name: name, udid: udid, isInjected: injected, runningAppBundle: runningApp))
-                    }
-                }
-            }
-            return result
-        } catch {
             return []
         }
+
+        var result: [BootedSimulator] = []
+        for (_, list) in devicesDict {
+            for dev in list {
+                guard let state = dev["state"] as? String, state == "Booted",
+                      let name = dev["name"] as? String,
+                      let udid = dev["udid"] as? String else { continue }
+                let injected = injectedSimUDIDs.contains(udid)
+                let runningApp = includeRunningApps ? getRunningApp(simUDID: udid) : nil
+                result.append(BootedSimulator(
+                    name: name,
+                    udid: udid,
+                    isInjected: injected,
+                    runningAppBundle: runningApp
+                ))
+            }
+        }
+        return result.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
-    
-    public static func injectDylib(loaderPath: String, intoUDID: String? = nil) {
-        let simulators = getBootedSimulators()
-        let targets = intoUDID != nil ? simulators.filter { $0.udid == intoUDID } : simulators
-        
+
+    @discardableResult
+    public static func injectDylib(loaderPath: String, intoUDID: String? = nil) -> Bool {
+        let targets: [BootedSimulator]
+        if let udid = intoUDID {
+            targets = [BootedSimulator(name: udid, udid: udid, isInjected: false, runningAppBundle: nil)]
+        } else {
+            targets = getBootedSimulators()
+        }
+
+        var allInjected = true
         for sim in targets {
-            // Set DYLD_INSERT_LIBRARIES
-            let proc1 = Process()
-            proc1.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-            proc1.arguments = [
+            let standard = runXcrun([
                 "simctl", "spawn", sim.udid,
                 "launchctl", "setenv", "DYLD_INSERT_LIBRARIES", loaderPath
-            ]
-            try? proc1.run()
-            proc1.waitUntilExit()
-            
-            // Set __XPC_DYLD_INSERT_LIBRARIES
-            let proc2 = Process()
-            proc2.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-            proc2.arguments = [
+            ]).0 == 0
+            let xpc = runXcrun([
                 "simctl", "spawn", sim.udid,
                 "launchctl", "setenv", "__XPC_DYLD_INSERT_LIBRARIES", loaderPath
-            ]
-            try? proc2.run()
-            proc2.waitUntilExit()
-            
-            injectedSimUDIDs.insert(sim.udid)
-            print("[SimulatorManager] Injected OpenSimCam dylib into \(sim.name) (\(sim.udid))")
+            ]).0 == 0
+
+            if standard && xpc {
+                injectedSimUDIDs.insert(sim.udid)
+                print("[SimulatorManager] Injected OpenSimCam dylib into \(sim.name) (\(sim.udid))")
+            } else {
+                allInjected = false
+                injectedSimUDIDs.remove(sim.udid)
+                print("[SimulatorManager] Failed to inject OpenSimCam into \(sim.name) (\(sim.udid))")
+            }
         }
+        return allInjected && !targets.isEmpty
     }
-    
-    public static func relaunchApp(bundleId: String, simUDID: String) {
-        let termProc = Process()
-        termProc.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        termProc.arguments = ["simctl", "terminate", simUDID, bundleId]
-        try? termProc.run()
-        termProc.waitUntilExit()
-        
-        let launchProc = Process()
-        launchProc.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        launchProc.arguments = ["simctl", "launch", simUDID, bundleId]
-        try? launchProc.run()
-        launchProc.waitUntilExit()
+
+    @discardableResult
+    private static func runXcrun(_ arguments: [String]) -> (Int32, String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        process.arguments = arguments
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        do {
+            try process.run()
+            let timeout = DispatchWorkItem {
+                if process.isRunning { process.terminate() }
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5, execute: timeout)
+            let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            timeout.cancel()
+            return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+        } catch {
+            return (-1, "")
+        }
     }
     
     public static func startAutoDetection(onUpdate: (([BootedSimulator]) -> Void)? = nil) {
-        ensureDylibsInstalled()
-        
-        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
-        timer.schedule(deadline: .now(), repeating: 2.0)
+        let timer = DispatchSource.makeTimerSource(queue: backgroundQueue)
+        timer.schedule(deadline: .now(), repeating: 3.0)
         timer.setEventHandler {
-            guard let loader = getLoaderPath() else { return }
-            let sims = getBootedSimulators()
-            let currentUDIDs = Set(sims.map { $0.udid })
-            
-            // Clean up stopped simulators
+            let devices = getBootedSimulators(includeRunningApps: false)
+            let currentUDIDs = Set(devices.map { $0.udid })
             injectedSimUDIDs = injectedSimUDIDs.intersection(currentUDIDs)
-            
-            // Automatically inject any newly booted simulator with both env vars
+
+            // Publish booted devices before querying app processes or copying
+            // the camera loader, so simulator discovery stays responsive.
+            DispatchQueue.main.async { onUpdate?(devices) }
+
+            let sims = devices.map { device in
+                BootedSimulator(
+                    name: device.name,
+                    udid: device.udid,
+                    isInjected: device.isInjected,
+                    runningAppBundle: getRunningApp(simUDID: device.udid)
+                )
+            }
+            DispatchQueue.main.async { onUpdate?(sims) }
+
+            guard let loader = getLoaderPath() else { return }
             for sim in sims {
                 if !injectedSimUDIDs.contains(sim.udid) {
                     injectDylib(loaderPath: loader, intoUDID: sim.udid)
                 }
             }
-            
-            let updatedSims = getBootedSimulators()
+
+            let updatedSims = sims.map { sim in
+                BootedSimulator(
+                    name: sim.name,
+                    udid: sim.udid,
+                    isInjected: injectedSimUDIDs.contains(sim.udid),
+                    runningAppBundle: sim.runningAppBundle
+                )
+            }
             DispatchQueue.main.async {
                 onUpdate?(updatedSims)
             }

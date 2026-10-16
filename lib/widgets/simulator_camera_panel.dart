@@ -210,7 +210,11 @@ class SimulatorCameraPanel extends StatelessWidget {
               : (_hasSimulator
                     ? 'Waiting for an app connection'
                     : 'Open a simulator to begin'))
-        : '${appBundle!.split('.').last} · ${isCameraActive ? 'Camera active ($activeCamera)' : 'Connected'}';
+        : '${appBundle!.split('.').last} · ${isCameraActive
+              ? 'Camera active ($activeCamera)'
+              : isConnected
+              ? 'Camera plugin connected'
+              : 'App detected; waiting for camera plugin'}';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

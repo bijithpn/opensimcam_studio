@@ -15,6 +15,7 @@ class LivePreviewPanel extends StatelessWidget {
     required this.targetCamera,
     required this.zoom,
     required this.onSwitchCamera,
+    required this.onOpenViewfinder,
     super.key,
   });
 
@@ -25,6 +26,7 @@ class LivePreviewPanel extends StatelessWidget {
   final String targetCamera;
   final double zoom;
   final VoidCallback onSwitchCamera;
+  final VoidCallback onOpenViewfinder;
 
   @override
   Widget build(BuildContext context) => GlassPanel(
@@ -53,6 +55,13 @@ class LivePreviewPanel extends StatelessWidget {
                 side: const BorderSide(color: Color(0x66444B63)),
               ),
             );
+            final viewfinderButton = IconButton(
+              tooltip: 'Open viewfinder',
+              onPressed: onOpenViewfinder,
+              icon: const Icon(CupertinoIcons.viewfinder, size: 17),
+              visualDensity: VisualDensity.compact,
+              color: StudioColors.textSecondary,
+            );
             final title = Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -70,11 +79,16 @@ class LivePreviewPanel extends StatelessWidget {
                 children: [
                   title,
                   const SizedBox(height: 8),
-                  Align(alignment: Alignment.centerRight, child: switchButton),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [viewfinderButton, switchButton],
+                  ),
                 ],
               );
             }
-            return Row(children: [title, const Spacer(), switchButton]);
+            return Row(
+              children: [title, const Spacer(), viewfinderButton, switchButton],
+            );
           },
         ),
         const SizedBox(height: 12),
@@ -92,7 +106,13 @@ class LivePreviewPanel extends StatelessWidget {
                         ? _emptyState()
                         : Image.memory(
                             bytes,
-                            fit: BoxFit.contain,
+                            // Passthrough is a screen mirror: fill the preview
+                            // viewport so it does not look like a small phone
+                            // feed floating between black side bars. The
+                            // simulator camera output itself remains 9:16.
+                            fit: source == CameraSourceType.passthrough
+                                ? BoxFit.cover
+                                : BoxFit.contain,
                             gaplessPlayback: true,
                           ),
                   ),

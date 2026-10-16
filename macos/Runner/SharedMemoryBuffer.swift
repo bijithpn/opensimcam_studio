@@ -203,6 +203,10 @@ public final class SharedMemoryBuffer {
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         renderCIImage(ciImage, slot: slot, config: config)
     }
+
+    public func writeCIImage(_ ciImage: CIImage, slot: Int, config: TransformConfig = TransformConfig()) {
+        renderCIImage(ciImage, slot: slot, config: config)
+    }
     
     public func writeCGImage(_ image: CGImage, slot: Int, config: TransformConfig = TransformConfig()) {
         let ciImage = CIImage(cgImage: image)

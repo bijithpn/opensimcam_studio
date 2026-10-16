@@ -12,6 +12,7 @@ import '../widgets/glass_panel.dart';
 import '../widgets/setting_row.dart';
 import '../widgets/live_preview_panel.dart';
 import '../widgets/simulator_camera_panel.dart';
+import '../widgets/viewfinder_dialog.dart';
 
 class OpenSimCamInspectorHome extends StatefulWidget {
   const OpenSimCamInspectorHome({super.key});
@@ -45,7 +46,6 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
   }
 
   StreamSubscription? _previewSubscription;
-  Timer? _statusPollTimer;
   final ValueNotifier<Uint8List?> _previewFrameNotifier =
       ValueNotifier<Uint8List?>(null);
 
@@ -56,6 +56,7 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
   bool _hasScreenCapturePermission = true;
   bool _isDiscoveringSimulators = true;
   bool _isSimulatorSetupRunning = false;
+  bool _isFetchingSimulators = false;
   bool _simulatorSetupComplete = false;
   String? _simulatorSetupMessage;
   String? _simulatorSetupError;
@@ -72,14 +73,20 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
     super.initState();
     _initMethodChannelHandler();
     _initPreviewStream();
-    _loadInitialState();
-    _startPeriodicStatusCheck();
+    // Let Flutter paint the workspace before camera enumeration, simulator
+    // discovery, or media-source initialization can do any work.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_fetchCameras());
+      unawaited(_fetchSimulators());
+      unawaited(_activateSource(_currentSource));
+    });
   }
 
   @override
   void dispose() {
+    _controlChannel.setMethodCallHandler(null);
     _previewSubscription?.cancel();
-    _statusPollTimer?.cancel();
     _previewFrameNotifier.dispose();
     _qrController.dispose();
     super.dispose();
@@ -88,6 +95,23 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
   void _initMethodChannelHandler() {
     _controlChannel.setMethodCallHandler((call) async {
       switch (call.method) {
+        case 'onTrayStartSetup':
+          unawaited(_startSimulatorSetup());
+          break;
+        case 'onTrayRefresh':
+          unawaited(_fetchCameras());
+          unawaited(_fetchSimulators());
+          break;
+        case 'onTraySourceChanged':
+          final sourceName = (call.arguments as Map?)?['source']?.toString();
+          if (sourceName != null) {
+            final source = CameraSourceType.values.firstWhere(
+              (item) => item.name == sourceName,
+              orElse: () => _currentSource,
+            );
+            unawaited(_activateSource(source));
+          }
+          break;
         case 'onSimulatorsUpdated':
           if (call.arguments is List) {
             final list = (call.arguments as List)
@@ -97,6 +121,7 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
               setState(() {
                 _bootedSimulators = list;
               });
+              _updateAutomaticSetupStatus(list);
             }
           }
           break;
@@ -107,6 +132,9 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
               setState(() {
                 _connectedAppBundle = args['bundleId']?.toString();
                 _isSimCameraActive = true;
+                _simulatorSetupComplete = false;
+                _simulatorSetupMessage = null;
+                _simulatorSetupError = null;
               });
             }
           }
@@ -130,6 +158,12 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
           break;
       }
     });
+    unawaited(
+      _controlChannel.invokeMethod<bool>('flutterReady').catchError((error) {
+        debugPrint('Tray bridge readiness handshake failed: $error');
+        return false;
+      }),
+    );
   }
 
   void _initPreviewStream() {
@@ -143,18 +177,6 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
         debugPrint('Preview stream error: $e');
       },
     );
-  }
-
-  Future<void> _loadInitialState() async {
-    await _fetchCameras();
-    await _fetchSimulators();
-    await _activateSource(_currentSource);
-  }
-
-  void _startPeriodicStatusCheck() {
-    _statusPollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      _fetchSimulators();
-    });
   }
 
   Future<void> _fetchCameras() async {
@@ -181,25 +203,30 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
   }
 
   Future<void> _fetchSimulators() async {
+    if (_isFetchingSimulators) return;
+    _isFetchingSimulators = true;
     try {
       final sims = await _controlChannel.invokeListMethod<Map>(
         'getBootedSimulators',
       );
       if (sims != null && mounted) {
+        final simulators = sims
+            .map((s) => Map<String, dynamic>.from(s))
+            .toList();
         setState(() {
           _isDiscoveringSimulators = false;
-          _bootedSimulators = sims
-              .map((s) => Map<String, dynamic>.from(s))
-              .toList();
-          // If no simulator or app is running, clear connected state
-          if (_bootedSimulators.isEmpty ||
-              _bootedSimulators.first['runningAppBundle'] == null) {
+          _bootedSimulators = simulators;
+          // Only clear a connection when every simulator has stopped. The
+          // running-app query can briefly return null while launch services
+          // are updating; the native socket disconnect event is authoritative.
+          if (_bootedSimulators.isEmpty) {
             if (_connectedAppBundle != null) {
               _connectedAppBundle = null;
               _isSimCameraActive = false;
             }
           }
         });
+        _updateAutomaticSetupStatus(simulators);
       } else if (mounted && _isDiscoveringSimulators) {
         setState(() => _isDiscoveringSimulators = false);
       }
@@ -208,12 +235,45 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
       if (mounted && _isDiscoveringSimulators) {
         setState(() => _isDiscoveringSimulators = false);
       }
+    } finally {
+      _isFetchingSimulators = false;
     }
+  }
+
+  void _updateAutomaticSetupStatus(List<Map<String, dynamic>> simulators) {
+    Map<String, dynamic>? simulator;
+    for (final candidate in simulators) {
+      if (candidate['runningAppBundle'] != null) {
+        simulator = candidate;
+        break;
+      }
+    }
+    if (simulator == null || _connectedAppBundle != null || !mounted) return;
+    final bundle = simulator['runningAppBundle']?.toString();
+    if (bundle == null || bundle.isEmpty || simulator['isInjected'] != true) {
+      return;
+    }
+    const message =
+        'Camera setup is ready. The running app was left untouched; if it was open before setup, it must be relaunched to load the camera plugin.';
+    if (_simulatorSetupMessage == message) return;
+    final isInjected = simulator['isInjected'] == true;
+    setState(() {
+      _simulatorSetupMessage = message;
+      _simulatorSetupError = null;
+      _simulatorSetupComplete = isInjected;
+    });
+  }
+
+  void _setTraySetupRunning(bool isRunning) {
+    _controlChannel.invokeMethod('setTraySetupState', {'isRunning': isRunning});
   }
 
   Future<void> _activateSource(CameraSourceType source) async {
     setState(() => _currentSource = source);
     try {
+      await _controlChannel.invokeMethod('updateTraySource', {
+        'source': source.name,
+      });
       switch (source) {
         case CameraSourceType.passthrough:
           final hasPerm =
@@ -223,10 +283,21 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
               false;
           setState(() => _hasScreenCapturePermission = hasPerm);
           if (!hasPerm) {
-            await _controlChannel.invokeMethod(
-              'requestScreenCapturePermission',
-            );
-            return;
+            final requested =
+                await _controlChannel.invokeMethod<bool>(
+                  'requestScreenCapturePermission',
+                ) ??
+                false;
+            // Permission requests may return before the system preference
+            // state has propagated, so confirm once before starting capture.
+            final granted =
+                requested ||
+                (await _controlChannel.invokeMethod<bool>(
+                      'checkScreenCapturePermission',
+                    ) ??
+                    false);
+            if (mounted) setState(() => _hasScreenCapturePermission = granted);
+            if (!granted) return;
           }
           await _controlChannel.invokeMethod('startPassthrough');
           break;
@@ -389,6 +460,7 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
       _simulatorSetupMessage = null;
       _simulatorSetupError = null;
     });
+    _setTraySetupRunning(true);
 
     try {
       final injected = await _controlChannel.invokeMethod<bool>(
@@ -404,18 +476,14 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
 
       final appBundle =
           _connectedAppBundle ?? simulator['runningAppBundle']?.toString();
-      if (appBundle != null && appBundle.isNotEmpty) {
-        await _controlChannel.invokeMethod('relaunchApp', {
-          'bundleId': appBundle,
-          'udid': udid,
-        });
-      }
       if (!mounted) return;
       setState(() {
         _simulatorSetupComplete = true;
         _simulatorSetupMessage = appBundle == null || appBundle.isEmpty
-            ? 'Setup complete. Launch an app in the simulator to connect.'
-            : 'Setup complete. Relaunched ${appBundle.split('.').last}.';
+            ? 'Setup is ready. Launch an app in the simulator to connect.'
+            : _connectedAppBundle == appBundle
+            ? 'Setup is ready. The current camera connection was left running.'
+            : 'Setup is ready. ${appBundle.split('.').last} was left running; the camera plugin loads when that app next launches.';
       });
     } on PlatformException catch (error) {
       debugPrint('Simulator setup failed: ${error.code} ${error.message}');
@@ -429,6 +497,7 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
       setState(() => _simulatorSetupError = 'Simulator setup failed.');
     } finally {
       if (mounted) setState(() => _isSimulatorSetupRunning = false);
+      _setTraySetupRunning(false);
     }
   }
 
@@ -464,6 +533,10 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
       backgroundColor: StudioColors.canvas,
       body: LiquidGlassLayer(
         settings: StudioGlass.settings,
+        // The package's shader renderer can produce a black surface on some
+        // macOS/Metal configurations. FakeGlass retains package blur/material
+        // styling while leaving child content on Flutter's normal render path.
+        fake: true,
         child: ScrollConfiguration(
           behavior: ScrollBehavior().copyWith(scrollbars: false),
           child: SafeArea(
@@ -484,9 +557,20 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
                               children: [
                                 _buildSimulatorCameraBottomCard(),
                                 const SizedBox(height: 14),
-                                SizedBox(
-                                  height: 360,
-                                  child: _buildWorkspacePreview(),
+                                LayoutBuilder(
+                                  builder: (context, previewConstraints) {
+                                    final frameWidth =
+                                        (previewConstraints.maxWidth - 28)
+                                            .clamp(160.0, double.infinity)
+                                            .toDouble();
+                                    // Camera frames are portrait 9:16. Give
+                                    // the preview the same shape so it neither
+                                    // crops the feed nor adds side bars.
+                                    return SizedBox(
+                                      height: frameWidth * 16 / 9 + 132,
+                                      child: _buildWorkspacePreview(),
+                                    );
+                                  },
                                 ),
                                 const SizedBox(height: 16),
                                 _buildSettingsContents(),
@@ -585,6 +669,12 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
     zoom: _previewTarget == 'front' ? _frontFraming.zoom : _backFraming.zoom,
     onSwitchCamera: () =>
         _setPreviewCamera(_previewTarget == 'back' ? 'front' : 'back'),
+    onOpenViewfinder: () => showCurrentViewfinder(
+      context: context,
+      frame: _previewFrameNotifier,
+      camera: _previewTarget,
+      zoom: _previewTarget == 'front' ? _frontFraming.zoom : _backFraming.zoom,
+    ),
   );
 
   // --- WIDGET BUILDERS ---

@@ -22,6 +22,7 @@
 
 /* Begin PBXBuildFile section */
 		24F84ABC98A89B4E7E5363A7 /* OpenSimCamBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1B8A92F9600380A4675F953 /* OpenSimCamBridge.swift */; };
+		A18C4F7D52E84BA2B6C0139A /* StudioTray.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C3A9D0E72B541B1A0F34E68 /* StudioTray.swift */; };
 		33036C5925D874A9945E5224 /* SharedMemoryBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 233F7DC8F19AE95B29723F25 /* SharedMemoryBuffer.swift */; };
 		331C80D8294CF71000263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C80D7294CF71000263BE5 /* RunnerTests.swift */; };
 		335BBD1B22A9A15E00E9071D /* GeneratedPluginRegistrant.swift in Sources */ = {isa = PBXBuildFile; fileRef = 335BBD1A22A9A15E00E9071D /* GeneratedPluginRegistrant.swift */; };
@@ -81,6 +82,7 @@
 		33CC10F52044A3C60003C045 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.xib; name = Base; path = Base.lproj/MainMenu.xib; sourceTree = "<group>"; };
 		33CC10F72044A3C60003C045 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = Info.plist; path = Runner/Info.plist; sourceTree = "<group>"; };
 		33CC11122044BFA00003C045 /* MainFlutterWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainFlutterWindow.swift; sourceTree = "<group>"; };
+		4C3A9D0E72B541B1A0F34E68 /* StudioTray.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioTray.swift; sourceTree = "<group>"; };
 		33CEB47222A05771004F2AC0 /* Flutter-Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Flutter-Debug.xcconfig"; sourceTree = "<group>"; };
 		33CEB47422A05771004F2AC0 /* Flutter-Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Flutter-Release.xcconfig"; sourceTree = "<group>"; };
 		33CEB47722A0578A004F2AC0 /* Flutter-Generated.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = "Flutter-Generated.xcconfig"; path = "ephemeral/Flutter-Generated.xcconfig"; sourceTree = "<group>"; };
@@ -203,6 +205,7 @@
 			children = (
 				33CC10F02044A3C60003C045 /* AppDelegate.swift */,
 				33CC11122044BFA00003C045 /* MainFlutterWindow.swift */,
+				4C3A9D0E72B541B1A0F34E68 /* StudioTray.swift */,
 				33E51913231747F40026EE4D /* DebugProfile.entitlements */,
 				33E51914231749380026EE4D /* Release.entitlements */,
 				33CC11242044D66E0003C045 /* Resources */,
@@ -459,6 +462,7 @@
 				33CC10F12044A3C60003C045 /* AppDelegate.swift in Sources */,
 				335BBD1B22A9A15E00E9071D /* GeneratedPluginRegistrant.swift in Sources */,
 				24F84ABC98A89B4E7E5363A7 /* OpenSimCamBridge.swift in Sources */,
+				A18C4F7D52E84BA2B6C0139A /* StudioTray.swift in Sources */,
 				33036C5925D874A9945E5224 /* SharedMemoryBuffer.swift in Sources */,
 				FEE2E11630750D16D76465CD /* MediaSource.swift in Sources */,
 				764B8312A4D953AB87BF3EA8 /* ProcessChannel.swift in Sources */,

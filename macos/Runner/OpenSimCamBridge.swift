@@ -5,6 +5,19 @@ import AVFoundation
 public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
     private var eventSink: FlutterEventSink?
     private var channel: FlutterMethodChannel?
+    private var flutterIsReady = false
+    private var pendingTrayCalls: [(String, Any?)] = []
+
+    private func invokeFlutterFromTray(_ method: String, arguments: Any? = nil) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let channel = self.channel else { return }
+            guard self.flutterIsReady else {
+                self.pendingTrayCalls.append((method, arguments))
+                return
+            }
+            channel.invokeMethod(method, arguments: arguments)
+        }
+    }
     
     public static func register(with registrar: FlutterPluginRegistrar) {
         let channel = FlutterMethodChannel(name: "com.opensimcam.studio/control", binaryMessenger: registrar.messenger)
@@ -14,6 +27,28 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
         instance.channel = channel
         registrar.addMethodCallDelegate(instance, channel: channel)
         eventChannel.setStreamHandler(instance)
+
+        Task { @MainActor in
+            StudioTrayController.shared.install(
+                onOpenStudio: {
+                    Task { @MainActor in
+                        StudioTrayController.shared.openStudioWindow()
+                    }
+                },
+                onStartSetup: { [weak instance] in
+                    instance?.invokeFlutterFromTray("onTrayStartSetup")
+                },
+                onRefresh: { [weak instance] in
+                    instance?.invokeFlutterFromTray("onTrayRefresh")
+                },
+                onSourceChanged: { [weak instance] source in
+                    instance?.invokeFlutterFromTray(
+                        "onTraySourceChanged",
+                        arguments: ["source": source]
+                    )
+                }
+            )
+        }
         
         // Start background socket server
         FrameHandshakeServer.shared.start()
@@ -21,11 +56,17 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
         // Hook up preview frames
         FrameHandshakeServer.shared.onPreviewFrame = { [weak instance] data in
             instance?.eventSink?(data)
+            Task { @MainActor in
+                StudioTrayController.shared.updatePreview(data)
+            }
         }
         
         // Hook up client app connection notifications
         FrameHandshakeServer.shared.onClientConnected = { [weak instance] bundleID, simUDID in
             DispatchQueue.main.async {
+                Task { @MainActor in
+                StudioTrayController.shared.updateConnection(isConnected: true)
+                }
                 instance?.channel?.invokeMethod("onClientConnected", arguments: [
                     "bundleId": bundleID,
                     "simUDID": simUDID
@@ -36,6 +77,9 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
         // Hook up client app disconnection notifications
         FrameHandshakeServer.shared.onClientDisconnected = { [weak instance] bundleID in
             DispatchQueue.main.async {
+                Task { @MainActor in
+                StudioTrayController.shared.updateConnection(isConnected: false)
+                }
                 instance?.channel?.invokeMethod("onClientDisconnected", arguments: [
                     "bundleId": bundleID
                 ])
@@ -45,6 +89,12 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
         // Hook up camera active state and camera switch notifications
         FrameHandshakeServer.shared.onCameraStateChanged = { [weak instance] bundleID, isActive, camera in
             DispatchQueue.main.async {
+                Task { @MainActor in
+                StudioTrayController.shared.updateConnection(
+                    isConnected: isActive,
+                    camera: camera
+                )
+                }
                 instance?.channel?.invokeMethod("onCameraStateChanged", arguments: [
                     "bundleId": bundleID,
                     "isActive": isActive,
@@ -55,11 +105,14 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
         
         // Start automatic simulator detection & dynamic injection
         SimulatorManager.startAutoDetection { [weak instance] sims in
+            Task { @MainActor in
+                StudioTrayController.shared.updateSimulators(sims)
+            }
             let simData = sims.map { [
                 "name": $0.name,
                 "udid": $0.udid,
                 "isInjected": $0.isInjected,
-                "runningAppBundle": $0.runningAppBundle as Any
+                "runningAppBundle": ($0.runningAppBundle as Any?) ?? NSNull()
             ] }
             instance?.channel?.invokeMethod("onSimulatorsUpdated", arguments: simData)
         }
@@ -69,6 +122,31 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
         let server = FrameHandshakeServer.shared
         
         switch call.method {
+        case "flutterReady":
+            flutterIsReady = true
+            let pendingCalls = pendingTrayCalls
+            pendingTrayCalls.removeAll()
+            for (method, arguments) in pendingCalls {
+                channel?.invokeMethod(method, arguments: arguments)
+            }
+            result(true)
+
+        case "updateTraySource":
+            let args = call.arguments as? [String: Any]
+            let source = args?["source"] as? String ?? "demoVideo"
+            Task { @MainActor in
+                StudioTrayController.shared.setSource(source)
+            }
+            result(true)
+
+        case "setTraySetupState":
+            let args = call.arguments as? [String: Any]
+            let isRunning = args?["isRunning"] as? Bool ?? false
+            Task { @MainActor in
+                StudioTrayController.shared.setSetupRunning(isRunning)
+            }
+            result(true)
+
         case "startPassthrough":
             server.currentMediaSource = PassthroughSource(fps: 30.0)
             result(true)
@@ -148,51 +226,63 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
             result(true)
             
         case "getCameras":
-            var deviceTypes: [AVCaptureDevice.DeviceType] = [.builtInWideAngleCamera]
-            if #available(macOS 14.0, *) {
-                deviceTypes.append(.external)
+            DispatchQueue.global(qos: .userInitiated).async {
+                var deviceTypes: [AVCaptureDevice.DeviceType] = [.builtInWideAngleCamera]
+                if #available(macOS 14.0, *) {
+                    deviceTypes.append(.external)
+                }
+                if #available(macOS 13.0, *) {
+                    deviceTypes.append(.continuityCamera)
+                }
+                let discovery = AVCaptureDevice.DiscoverySession(
+                    deviceTypes: deviceTypes,
+                    mediaType: .video,
+                    position: .unspecified
+                )
+                let cameras = discovery.devices.map { [
+                    "name": $0.localizedName,
+                    "id": $0.uniqueID
+                ] }
+                DispatchQueue.main.async { result(cameras) }
             }
-            if #available(macOS 13.0, *) {
-                deviceTypes.append(.continuityCamera)
-            }
-            let discovery = AVCaptureDevice.DiscoverySession(
-                deviceTypes: deviceTypes,
-                mediaType: .video,
-                position: .unspecified
-            )
-            let cameras = discovery.devices.map { [
-                "name": $0.localizedName,
-                "id": $0.uniqueID
-            ] }
-            result(cameras)
             
         case "getBootedSimulators":
-            let sims = SimulatorManager.getBootedSimulators().map { [
-                "name": $0.name,
-                "udid": $0.udid,
-                "isInjected": $0.isInjected,
-                "runningAppBundle": $0.runningAppBundle as Any
-            ] }
-            result(sims)
-            
-        case "relaunchApp":
-            guard let args = call.arguments as? [String: Any],
-                  let bundleId = args["bundleId"] as? String,
-                  let udid = args["udid"] as? String else {
-                result(FlutterError(code: "INVALID_ARGS", message: "bundleId and udid required", details: nil))
-                return
+            SimulatorManager.backgroundQueue.async {
+                let sims = SimulatorManager.getBootedSimulators().map { [
+                    "name": $0.name,
+                    "udid": $0.udid,
+                    "isInjected": $0.isInjected,
+                    "runningAppBundle": ($0.runningAppBundle as Any?) ?? NSNull()
+                ] }
+                DispatchQueue.main.async { result(sims) }
             }
-            SimulatorManager.relaunchApp(bundleId: bundleId, simUDID: udid)
-            result(true)
             
         case "injectSimulator":
             let args = call.arguments as? [String: Any]
             let udid = args?["udid"] as? String
-            if let loader = SimulatorManager.getLoaderPath() {
-                SimulatorManager.injectDylib(loaderPath: loader, intoUDID: udid)
-                result(true)
-            } else {
-                result(FlutterError(code: "LOADER_NOT_FOUND", message: "OpenSimCam dylib not found", details: nil))
+            SimulatorManager.backgroundQueue.async {
+                guard let loader = SimulatorManager.getLoaderPath() else {
+                    DispatchQueue.main.async {
+                        result(FlutterError(
+                            code: "LOADER_NOT_FOUND",
+                            message: "OpenSimCam camera loader was not found.",
+                            details: nil
+                        ))
+                    }
+                    return
+                }
+                let injected = SimulatorManager.injectDylib(loaderPath: loader, intoUDID: udid)
+                DispatchQueue.main.async {
+                    if injected {
+                        result(true)
+                    } else {
+                        result(FlutterError(
+                            code: "SIMULATOR_SETUP_FAILED",
+                            message: "Could not apply the camera loader to the booted simulator.",
+                            details: nil
+                        ))
+                    }
+                }
             }
             
         case "checkScreenCapturePermission":

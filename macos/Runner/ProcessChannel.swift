@@ -1,6 +1,7 @@
 import Foundation
 import CoreGraphics
 import CoreVideo
+import CoreImage
 
 public final class ProcessChannel {
     public let simUDID: String
@@ -230,6 +231,31 @@ public final class ProcessChannel {
                 "sourceMirrorCompensation": true
             ]
             sendJSON(frontMsg)
+        }
+    }
+
+    public func deliverCIImage(_ image: CIImage) {
+        guard !isDisconnected, socketFD >= 0 else { return }
+        currentSlotIndex = (currentSlotIndex + 1) % 3
+
+        if let bShm = backShm {
+            bShm.writeCIImage(image, slot: currentSlotIndex, config: backTransformConfig)
+            sendJSON([
+                "type": "frame",
+                "camera": "back",
+                "index": currentSlotIndex,
+                "sourceMirrorCompensation": false
+            ])
+        }
+
+        if let fShm = frontShm {
+            fShm.writeCIImage(image, slot: currentSlotIndex, config: frontTransformConfig)
+            sendJSON([
+                "type": "frame",
+                "camera": "front",
+                "index": currentSlotIndex,
+                "sourceMirrorCompensation": true
+            ])
         }
     }
     

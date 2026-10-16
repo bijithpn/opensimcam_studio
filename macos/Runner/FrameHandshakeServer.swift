@@ -29,6 +29,8 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
     ])
     private let colorSpace = CGColorSpaceCreateDeviceRGB()
     private let previewQueue = DispatchQueue(label: "opensimcam.preview.queue", qos: .userInteractive)
+    private let sourceLock = NSLock()
+    private let previewStateLock = NSLock()
     private var isGeneratingPreview = false
     private var lastPreviewTime: CFAbsoluteTime = 0
     
@@ -36,12 +38,31 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
     public var backTransformConfig = TransformConfig(fitMode: "fill", zoom: 1.0, offsetX: 0.0, offsetY: 0.0, rotation: 0, mirror: false)
     public var previewTargetCamera: String = "back"
     
+    private var mediaSource: MediaSource?
     public var currentMediaSource: MediaSource? {
-        didSet {
-            oldValue?.stop()
-            currentMediaSource?.delegate = self
-            currentMediaSource?.start()
+        get {
+            sourceLock.lock()
+            defer { sourceLock.unlock() }
+            return mediaSource
         }
+        set {
+            sourceLock.lock()
+            let previous = mediaSource
+            mediaSource = newValue
+            sourceLock.unlock()
+
+            guard previous !== newValue else { return }
+            previous?.delegate = nil
+            previous?.stop()
+            newValue?.delegate = self
+            newValue?.start()
+        }
+    }
+
+    private func isCurrentSource(_ source: MediaSource) -> Bool {
+        sourceLock.lock()
+        defer { sourceLock.unlock() }
+        return mediaSource === source
     }
     
     private init() {}
@@ -72,7 +93,6 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
         }
         activeChannels.removeAll()
         
-        currentMediaSource?.stop()
         currentMediaSource = nil
         print("[FrameHandshakeServer] Stopped and cleaned up all sockets.")
     }
@@ -187,9 +207,18 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
     }
     
     // MARK: - MediaSourceDelegate
-    public func mediaSourceDidOutputFrame(_ source: MediaSource, pixelBuffer: CVPixelBuffer?, image: CGImage?) {
+    public func mediaSourceDidOutputFrame(
+        _ source: MediaSource,
+        pixelBuffer: CVPixelBuffer?,
+        image: CGImage?,
+        ciImage: CIImage?
+    ) {
+        guard isCurrentSource(source) else { return }
+
         for channel in activeChannels {
-            if let pb = pixelBuffer {
+            if let ciImage {
+                channel.deliverCIImage(ciImage)
+            } else if let pb = pixelBuffer {
                 channel.deliverPixelBuffer(pb)
             } else if let img = image {
                 channel.deliverCGImage(img)
@@ -198,12 +227,16 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
         
         // GPU-accelerated JPEG generation for Flutter UI preview (~25 FPS) on dedicated queue
         let now = CFAbsoluteTimeGetCurrent()
+        previewStateLock.lock()
         if now - lastPreviewTime > 0.04 && !isGeneratingPreview {
             lastPreviewTime = now
             isGeneratingPreview = true
+            previewStateLock.unlock()
             
             var ci: CIImage?
-            if let pb = pixelBuffer {
+            if let ciImage {
+                ci = ciImage
+            } else if let pb = pixelBuffer {
                 ci = CIImage(cvPixelBuffer: pb)
             } else if let img = image {
                 ci = CIImage(cgImage: img)
@@ -212,8 +245,12 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
             if let ci = ci {
                 let config = (self.previewTargetCamera == "front") ? self.frontTransformConfig : self.backTransformConfig
                 previewQueue.async { [weak self] in
-                    defer { self?.isGeneratingPreview = false }
-                    guard let self = self else { return }
+                    guard let self else { return }
+                    defer {
+                        self.previewStateLock.lock()
+                        self.isGeneratingPreview = false
+                        self.previewStateLock.unlock()
+                    }
                     
                     // Render through exact same transform pipeline as simulator
                     let transformed = SharedMemoryBuffer.transformToPortraitDisplay(ci, config: config)
@@ -229,17 +266,23 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
                         options: [CIImageRepresentationOption(rawValue: "lossyCompressionFactor"): 0.7]
                     ) {
                         DispatchQueue.main.async {
+                            guard self.isCurrentSource(source) else { return }
                             self.onPreviewFrame?(jpeg)
                         }
                     }
                 }
             } else {
+                previewStateLock.lock()
                 isGeneratingPreview = false
+                previewStateLock.unlock()
             }
+        } else {
+            previewStateLock.unlock()
         }
     }
     
     public func mediaSourceDidOutputMetadata(_ source: MediaSource, metadataObjects: [[String: Any]]) {
+        guard isCurrentSource(source) else { return }
         for channel in activeChannels {
             channel.deliverMetadata(metadataObjects)
         }
