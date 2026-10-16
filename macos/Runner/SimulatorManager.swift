@@ -9,9 +9,21 @@ public struct BootedSimulator {
 
 public final class SimulatorManager {
     public static let shared = SimulatorManager()
-    public static let backgroundQueue = DispatchQueue(label: "com.opensimcam.simulator", qos: .utility)
+    public static let backgroundQueue = DispatchQueue(label: "com.opensc.simulator", qos: .utility)
     private static var autoTimer: DispatchSourceTimer?
     private static var injectedSimUDIDs = Set<String>()
+    private static let runningAppsLock = NSLock()
+    private static var runningAppsCache: [String: String] = [:]
+    private static var runningAppsLastChecked: [String: Date] = [:]
+
+    /// A real plugin handshake proves the loader is already running in this
+    /// simulator, so treat it as ready without waiting for another launchctl
+    /// verification pass.
+    public static func recordSuccessfulHandshake(simUDID: String) {
+        backgroundQueue.async {
+            injectedSimUDIDs.insert(simUDID)
+        }
+    }
     
     public static func getLoaderPath() -> String? {
         ensureDylibsInstalled()
@@ -73,6 +85,28 @@ public final class SimulatorManager {
             return bundle.hasPrefix("com.apple.") ? nil : bundle
         }.first
     }
+
+    private static func getCachedRunningApp(simUDID: String) -> String? {
+        runningAppsLock.lock()
+        if let checkedAt = runningAppsLastChecked[simUDID],
+           Date().timeIntervalSince(checkedAt) < 6 {
+            let cached = runningAppsCache[simUDID]
+            runningAppsLock.unlock()
+            return cached
+        }
+        runningAppsLock.unlock()
+
+        let runningApp = getRunningApp(simUDID: simUDID)
+        runningAppsLock.lock()
+        runningAppsLastChecked[simUDID] = Date()
+        if let runningApp {
+            runningAppsCache[simUDID] = runningApp
+        } else {
+            runningAppsCache.removeValue(forKey: simUDID)
+        }
+        runningAppsLock.unlock()
+        return runningApp
+    }
     
     public static func getBootedSimulators(includeRunningApps: Bool = true) -> [BootedSimulator] {
         let (status, output) = runXcrun(["simctl", "list", "devices", "booted", "-j"])
@@ -89,7 +123,7 @@ public final class SimulatorManager {
                       let name = dev["name"] as? String,
                       let udid = dev["udid"] as? String else { continue }
                 let injected = injectedSimUDIDs.contains(udid)
-                let runningApp = includeRunningApps ? getRunningApp(simUDID: udid) : nil
+                let runningApp = includeRunningApps ? getCachedRunningApp(simUDID: udid) : nil
                 result.append(BootedSimulator(
                     name: name,
                     udid: udid,
@@ -112,25 +146,48 @@ public final class SimulatorManager {
 
         var allInjected = true
         for sim in targets {
-            let standard = runXcrun([
-                "simctl", "spawn", sim.udid,
-                "launchctl", "setenv", "DYLD_INSERT_LIBRARIES", loaderPath
-            ]).0 == 0
-            let xpc = runXcrun([
-                "simctl", "spawn", sim.udid,
-                "launchctl", "setenv", "__XPC_DYLD_INSERT_LIBRARIES", loaderPath
-            ]).0 == 0
+            let standardVariable = "DYLD_INSERT_LIBRARIES"
+            let xpcVariable = "__XPC_DYLD_INSERT_LIBRARIES"
+            var standardReady = getLaunchdEnvironment(standardVariable, simUDID: sim.udid) == loaderPath
+            var xpcReady = getLaunchdEnvironment(xpcVariable, simUDID: sim.udid) == loaderPath
 
-            if standard && xpc {
+            // Avoid re-running launchctl setenv on every refresh when the
+            // simulator already has the selected loader configured.
+            if !standardReady {
+                let result = runXcrun([
+                    "simctl", "spawn", sim.udid,
+                    "launchctl", "setenv", standardVariable, loaderPath
+                ])
+                standardReady = result.0 == 0 ||
+                    getLaunchdEnvironment(standardVariable, simUDID: sim.udid) == loaderPath
+            }
+            if !xpcReady {
+                let result = runXcrun([
+                    "simctl", "spawn", sim.udid,
+                    "launchctl", "setenv", xpcVariable, loaderPath
+                ])
+                xpcReady = result.0 == 0 ||
+                    getLaunchdEnvironment(xpcVariable, simUDID: sim.udid) == loaderPath
+            }
+
+            if standardReady && xpcReady {
                 injectedSimUDIDs.insert(sim.udid)
-                print("[SimulatorManager] Injected OpenSimCam dylib into \(sim.name) (\(sim.udid))")
+                print("[SimulatorManager] Injected OpenSC camera loader into \(sim.name) (\(sim.udid))")
             } else {
                 allInjected = false
                 injectedSimUDIDs.remove(sim.udid)
-                print("[SimulatorManager] Failed to inject OpenSimCam into \(sim.name) (\(sim.udid))")
+                print("[SimulatorManager] Loader verification failed for \(sim.name) (\(sim.udid)); DYLD=\(standardReady), XPC_DYLD=\(xpcReady)")
             }
         }
         return allInjected && !targets.isEmpty
+    }
+
+    private static func getLaunchdEnvironment(_ key: String, simUDID: String) -> String? {
+        let (status, value) = runXcrun([
+            "simctl", "spawn", simUDID, "launchctl", "getenv", key
+        ])
+        guard status == 0 else { return nil }
+        return value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     @discardableResult
@@ -139,19 +196,54 @@ public final class SimulatorManager {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
         process.arguments = arguments
         let outputPipe = Pipe()
+        let errorPipe = Pipe()
         process.standardOutput = outputPipe
+        process.standardError = errorPipe
         do {
             try process.run()
-            let timeout = DispatchWorkItem {
-                if process.isRunning { process.terminate() }
+            let outputGroup = DispatchGroup()
+            var outputData = Data()
+            var errorData = Data()
+            outputGroup.enter()
+            DispatchQueue.global(qos: .utility).async {
+                outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                outputGroup.leave()
             }
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5, execute: timeout)
-            let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            outputGroup.enter()
+            DispatchQueue.global(qos: .utility).async {
+                errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                outputGroup.leave()
+            }
+
+            let timeoutLock = NSLock()
+            var didTimeout = false
+            let timeout = DispatchWorkItem {
+                guard process.isRunning else { return }
+                timeoutLock.lock()
+                didTimeout = true
+                timeoutLock.unlock()
+                process.terminate()
+            }
+            // Simulator launch services can be busy while booting. Five
+            // seconds caused healthy setenv calls to be terminated and left
+            // setup reporting stale failures.
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 20, execute: timeout)
             process.waitUntilExit()
             timeout.cancel()
-            return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+            outputGroup.wait()
+
+            timeoutLock.lock()
+            let timedOut = didTimeout
+            timeoutLock.unlock()
+            let stdout = String(data: outputData, encoding: .utf8) ?? ""
+            let stderr = String(data: errorData, encoding: .utf8) ?? ""
+            if timedOut {
+                print("[SimulatorManager] xcrun timed out: \(arguments.joined(separator: " "))")
+                return (-1, stdout + stderr)
+            }
+            return (process.terminationStatus, process.terminationStatus == 0 ? stdout : stdout + stderr)
         } catch {
-            return (-1, "")
+            return (-1, error.localizedDescription)
         }
     }
     
@@ -162,6 +254,10 @@ public final class SimulatorManager {
             let devices = getBootedSimulators(includeRunningApps: false)
             let currentUDIDs = Set(devices.map { $0.udid })
             injectedSimUDIDs = injectedSimUDIDs.intersection(currentUDIDs)
+            runningAppsLock.lock()
+            runningAppsLastChecked = runningAppsLastChecked.filter { currentUDIDs.contains($0.key) }
+            runningAppsCache = runningAppsCache.filter { currentUDIDs.contains($0.key) }
+            runningAppsLock.unlock()
 
             // Publish booted devices before querying app processes or copying
             // the camera loader, so simulator discovery stays responsive.
@@ -172,7 +268,7 @@ public final class SimulatorManager {
                     name: device.name,
                     udid: device.udid,
                     isInjected: device.isInjected,
-                    runningAppBundle: getRunningApp(simUDID: device.udid)
+                    runningAppBundle: getCachedRunningApp(simUDID: device.udid)
                 )
             }
             DispatchQueue.main.async { onUpdate?(sims) }

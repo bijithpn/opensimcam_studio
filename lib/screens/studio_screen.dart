@@ -14,15 +14,14 @@ import '../widgets/live_preview_panel.dart';
 import '../widgets/simulator_camera_panel.dart';
 import '../widgets/viewfinder_dialog.dart';
 
-class OpenSimCamInspectorHome extends StatefulWidget {
-  const OpenSimCamInspectorHome({super.key});
+class OpenSCStudioHome extends StatefulWidget {
+  const OpenSCStudioHome({super.key});
 
   @override
-  State<OpenSimCamInspectorHome> createState() =>
-      _OpenSimCamInspectorHomeState();
+  State<OpenSCStudioHome> createState() => _OpenSCStudioHomeState();
 }
 
-class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
+class _OpenSCStudioHomeState extends State<OpenSCStudioHome> {
   static const MethodChannel _controlChannel = MethodChannel(
     'com.opensimcam.studio/control',
   );
@@ -135,7 +134,9 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
             if (mounted) {
               setState(() {
                 _connectedAppBundle = args['bundleId']?.toString();
-                _isSimCameraActive = true;
+                // The socket handshake proves the app is present, but the
+                // camera is live only after its plugin sends a `start` event.
+                _isSimCameraActive = false;
                 _simulatorSetupComplete = false;
                 _simulatorSetupMessage = null;
                 _simulatorSetupError = null;
@@ -293,6 +294,10 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
     _controlChannel.invokeMethod('setTraySetupState', {'isRunning': isRunning});
   }
 
+  void _setTraySetupError(String? message) {
+    _controlChannel.invokeMethod('setTraySetupError', {'message': message});
+  }
+
   Future<void> _activateSource(CameraSourceType source) async {
     setState(() => _currentSource = source);
     try {
@@ -350,7 +355,7 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
           if (demoPath == null || demoPath.isEmpty) {
             final tempDir = Directory.systemTemp;
             final filename = _selectedBundledVideoAsset.split('/').last;
-            demoPath = '${tempDir.path}/opensimcam_$filename';
+            demoPath = '${tempDir.path}/opensc_$filename';
             final file = File(demoPath);
             if (!await file.exists()) {
               final byteData = await rootBundle.load(
@@ -507,6 +512,7 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
           message: 'Could not configure this simulator.',
         );
       }
+      _setTraySetupError(null);
 
       final appBundle =
           _connectedAppBundle ?? simulator['runningAppBundle']?.toString();
@@ -521,12 +527,14 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
       });
     } on PlatformException catch (error) {
       debugPrint('Simulator setup failed: ${error.code} ${error.message}');
+      _setTraySetupError(error.message ?? 'Simulator setup failed.');
       if (!mounted) return;
       setState(() {
         _simulatorSetupError = error.message ?? 'Simulator setup failed.';
       });
     } catch (error) {
       debugPrint('Simulator setup failed: $error');
+      _setTraySetupError('Simulator setup failed: $error');
       if (!mounted) return;
       setState(() => _simulatorSetupError = 'Simulator setup failed.');
     } finally {
@@ -653,12 +661,12 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'OpenSimCam',
+              'OpenSC',
               style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
             ),
             SizedBox(height: 2),
             Text(
-              'Studio · Camera workspace',
+              'Open Source Simulator Cam',
               style: TextStyle(fontSize: 11, color: Color(0xFFA7ADBE)),
             ),
           ],

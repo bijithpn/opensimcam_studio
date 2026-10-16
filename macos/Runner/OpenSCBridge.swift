@@ -2,7 +2,7 @@ import Foundation
 import FlutterMacOS
 import AVFoundation
 
-public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
+public final class OpenSCBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
     private var eventSink: FlutterEventSink?
     private var channel: FlutterMethodChannel?
     private var flutterAssetPathResolver: ((String) -> String?)?
@@ -24,7 +24,7 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
         let channel = FlutterMethodChannel(name: "com.opensimcam.studio/control", binaryMessenger: registrar.messenger)
         let eventChannel = FlutterEventChannel(name: "com.opensimcam.studio/preview", binaryMessenger: registrar.messenger)
         
-        let instance = OpenSimCamBridge()
+        let instance = OpenSCBridge()
         instance.channel = channel
         instance.flutterAssetPathResolver = { asset in
             let assetKey = registrar.lookupKey(forAsset: asset)
@@ -80,6 +80,7 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
         
         // Hook up client app connection notifications
         FrameHandshakeServer.shared.onClientConnected = { [weak instance] bundleID, simUDID in
+            SimulatorManager.recordSuccessfulHandshake(simUDID: simUDID)
             DispatchQueue.main.async {
                 Task { @MainActor in
                 StudioTrayController.shared.updateConnection(isConnected: true)
@@ -107,8 +108,8 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
         FrameHandshakeServer.shared.onCameraStateChanged = { [weak instance] bundleID, isActive, camera in
             DispatchQueue.main.async {
                 Task { @MainActor in
-                StudioTrayController.shared.updateConnection(
-                    isConnected: isActive,
+                StudioTrayController.shared.updateCameraState(
+                    isActive: isActive,
                     camera: camera
                 )
                 }
@@ -146,6 +147,28 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
             for (method, arguments) in pendingCalls {
                 channel?.invokeMethod(method, arguments: arguments)
             }
+            // A simulator app can complete its native handshake before the
+            // Dart method handler is attached. Replay the current native
+            // connection state so already-running apps appear immediately.
+            for connection in server.connectionSnapshot() {
+                SimulatorManager.recordSuccessfulHandshake(simUDID: connection.simUDID)
+                Task { @MainActor in
+                    StudioTrayController.shared.updateConnection(isConnected: true)
+                    StudioTrayController.shared.updateCameraState(
+                        isActive: connection.isCameraActive,
+                        camera: connection.camera
+                    )
+                }
+                channel?.invokeMethod("onClientConnected", arguments: [
+                    "bundleId": connection.bundleID,
+                    "simUDID": connection.simUDID
+                ])
+                channel?.invokeMethod("onCameraStateChanged", arguments: [
+                    "bundleId": connection.bundleID,
+                    "isActive": connection.isCameraActive,
+                    "camera": connection.camera
+                ])
+            }
             result(true)
 
         case "updateTraySource":
@@ -161,6 +184,14 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
             let isRunning = args?["isRunning"] as? Bool ?? false
             Task { @MainActor in
                 StudioTrayController.shared.setSetupRunning(isRunning)
+            }
+            result(true)
+
+        case "setTraySetupError":
+            let args = call.arguments as? [String: Any]
+            let message = args?["message"] as? String
+            Task { @MainActor in
+                StudioTrayController.shared.setSetupError(message)
             }
             result(true)
 
@@ -296,7 +327,7 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
                     DispatchQueue.main.async {
                         result(FlutterError(
                             code: "LOADER_NOT_FOUND",
-                            message: "OpenSimCam camera loader was not found.",
+                            message: "OpenSC camera loader was not found.",
                             details: nil
                         ))
                     }

@@ -29,8 +29,8 @@
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSCameraUsageDescription</key>
-	<string>OpenSimCam requires camera access to stream your real Mac camera to the iOS Simulator.</string>
+	<string>OpenSC needs camera access to stream your Mac camera to the iOS Simulator.</string>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>OpenSimCam requires screen recording access to enable Passthrough mode (capturing what is behind the Simulator window).</string>
+	<string>OpenSC needs screen recording access for Passthrough mode, which captures the screen behind the Simulator window.</string>
 </dict>
 </plist>

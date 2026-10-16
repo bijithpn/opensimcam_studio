@@ -9,6 +9,7 @@ final class StudioTrayModel: ObservableObject {
     @Published var connectionStatus = "Searching"
     @Published var isConnected = false
     @Published var isSettingUp = false
+    @Published var setupError: String?
     @Published var selectedSource = "demoVideo"
 
     var onOpenStudio: (() -> Void)?
@@ -41,11 +42,11 @@ final class StudioTrayController: NSObject, NSPopoverDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.image = NSImage(
             systemSymbolName: "camera.aperture",
-            accessibilityDescription: "OpenSimCam Studio"
+            accessibilityDescription: "OpenSC (Open Source Simulator Cam)"
         )
         item.button?.image?.isTemplate = true
-        item.button?.toolTip = "OpenSimCam Studio"
-        item.button?.setAccessibilityLabel("OpenSimCam Studio menu")
+        item.button?.toolTip = "OpenSC (Open Source Simulator Cam)"
+        item.button?.setAccessibilityLabel("OpenSC menu")
         item.button?.target = self
         item.button?.action = #selector(togglePopover(_:))
         statusItem = item
@@ -82,7 +83,16 @@ final class StudioTrayController: NSObject, NSPopoverDelegate {
 
     private func showPopover() {
         guard !popover.isShown, let button = statusItem?.button else { return }
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        // Anchor a little inside the status item rather than at its full lower
+        // edge. AppKit's default popover offset otherwise leaves a visible gap
+        // between the tray and the menu bar on recent macOS releases.
+        let anchor = NSRect(
+            x: button.bounds.midX - 1,
+            y: button.bounds.minY + min(6, button.bounds.height / 3),
+            width: 2,
+            height: 1
+        )
+        popover.show(relativeTo: anchor, of: button, preferredEdge: .minY)
         button.highlight(true)
     }
 
@@ -129,8 +139,18 @@ final class StudioTrayController: NSObject, NSPopoverDelegate {
         }
     }
 
+    func updateCameraState(isActive: Bool, camera: String) {
+        guard model.isConnected else { return }
+        model.connectionStatus = isActive ? "Camera active · \(camera)" : "App connected · camera idle"
+    }
+
     func setSetupRunning(_ value: Bool) {
         model.isSettingUp = value
+        if value { model.setupError = nil }
+    }
+
+    func setSetupError(_ message: String?) {
+        model.setupError = message
     }
 
     func setSource(_ value: String) {
@@ -193,7 +213,7 @@ private struct StudioTrayContent: View {
             HStack(spacing: 8) {
                 Image(systemName: "camera.aperture")
                     .foregroundStyle(.secondary)
-                Text("OpenSimCam Studio")
+                Text("OpenSC")
                     .font(.system(size: 15, weight: .semibold))
                 Spacer(minLength: 0)
                 Button {
@@ -240,7 +260,11 @@ private struct StudioTrayContent: View {
             } label: {
                 HStack(spacing: 7) {
                     if model.isSettingUp {
-                        ProgressView().controlSize(.small)
+                        // Avoid NSProgressIndicator's dynamic accent-color
+                        // resolution here. On macOS 26.2 it can recurse through
+                        // AppKit appearance resolution and overflow the main
+                        // thread stack while the tray redraws.
+                        Image(systemName: "hourglass")
                     } else {
                         Image(systemName: "bolt.horizontal.circle")
                     }
@@ -251,9 +275,20 @@ private struct StudioTrayContent: View {
                 .font(.system(size: 11, weight: .semibold))
             }
             .buttonStyle(.borderedProminent)
-            .tint(Color.accentColor.opacity(0.86))
+            .tint(Color(red: 0.12, green: 0.46, blue: 0.88))
             .disabled(model.isSettingUp || model.simulatorName == "No booted simulator")
             .padding(.top, 10)
+
+            if let setupError = model.setupError {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                    Text(setupError)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .font(.system(size: 10))
+                .foregroundStyle(Color(red: 0.96, green: 0.48, blue: 0.48))
+                .padding(.top, 7)
+            }
 
             Divider().padding(.vertical, 12)
 

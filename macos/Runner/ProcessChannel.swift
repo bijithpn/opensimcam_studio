@@ -9,15 +9,16 @@ public final class ProcessChannel {
     public let channelPath: String
     
     private var socketFD: Int32 = -1
-    private let queue = DispatchQueue(label: "opensimcam.processchannel")
+    private let stateLock = NSLock()
+    private let queue = DispatchQueue(label: "opensc.processchannel")
     private var readSource: DispatchSourceRead?
     private var readBuffer = Data()
     
     public var frontShm: SharedMemoryBuffer?
     public var backShm: SharedMemoryBuffer?
     
-    public var isCameraActive = false
-    public var activeCamera = "back"
+    private var isCameraActive = false
+    private var activeCamera = "back"
     private let transformLock = NSLock()
     private var storedFrontTransformConfig = TransformConfig(fitMode: "fill", zoom: 1.0, offsetX: 0.0, offsetY: 0.0, rotation: 0, mirror: true)
     private var storedBackTransformConfig = TransformConfig(fitMode: "fill", zoom: 1.0, offsetX: 0.0, offsetY: 0.0, rotation: 0, mirror: false)
@@ -94,13 +95,19 @@ public final class ProcessChannel {
         }
         
         print("[ProcessChannel] Connected to app '\(bundleID)' in simulator '\(simUDID)'")
-        setupSharedMemory()
-        sendOffer()
+        guard setupSharedMemory() else {
+            disconnect()
+            return false
+        }
         startReading()
+        // Install the read source before writing. A fast client teardown can
+        // make the first offer fail; disconnect then closes the descriptor.
+        // Starting the source afterwards would pass -1 to DispatchSource.
+        sendOffer()
         return true
     }
     
-    private func setupSharedMemory() {
+    private func setupSharedMemory() -> Bool {
         let base = (channelPath as NSString).lastPathComponent
         let parts = base.split(separator: ".")
         let pidStr = !parts.isEmpty ? String(parts[0]) : "\(ProcessInfo.processInfo.processIdentifier)"
@@ -111,8 +118,12 @@ public final class ProcessChannel {
         do {
             frontShm = try SharedMemoryBuffer(path: frontPath, width: 1920, height: 1080, slotCount: 3)
             backShm = try SharedMemoryBuffer(path: backPath, width: 1920, height: 1080, slotCount: 3)
+            return true
         } catch {
             print("[ProcessChannel] Failed to setup shared memory: \(error)")
+            frontShm = nil
+            backShm = nil
+            return false
         }
     }
     
@@ -149,26 +160,43 @@ public final class ProcessChannel {
     }
     
     private func startReading() {
-        let source = DispatchSource.makeReadSource(fileDescriptor: socketFD, queue: queue)
+        stateLock.lock()
+        let descriptor = socketFD
+        let disconnected = isDisconnected
+        stateLock.unlock()
+        guard descriptor >= 0, !disconnected else { return }
+
+        let source = DispatchSource.makeReadSource(fileDescriptor: descriptor, queue: queue)
         source.setEventHandler { [weak self] in
-            guard let self = self, !self.isDisconnected else { return }
+            guard let self = self, !self.isTransportDisconnected else { return }
             var buffer = [UInt8](repeating: 0, count: 4096)
-            let bytesRead = read(self.socketFD, &buffer, buffer.count)
+            let bytesRead = read(descriptor, &buffer, buffer.count)
             if bytesRead > 0 {
                 self.readBuffer.append(buffer, count: bytesRead)
                 self.processReadBuffer()
+            } else if bytesRead < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+                return
             } else if bytesRead <= 0 {
                 self.disconnect()
             }
         }
-        source.setCancelHandler { [weak self] in
-            if let fd = self?.socketFD, fd >= 0 {
-                close(fd)
-                self?.socketFD = -1
-            }
-        }
+        // Wait for any in-flight read handler to finish before closing this
+        // descriptor, avoiding a close/reuse race with another process socket.
+        source.setCancelHandler { close(descriptor) }
         self.readSource = source
         source.resume()
+    }
+
+    private var isTransportDisconnected: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return isDisconnected
+    }
+
+    public func cameraStateSnapshot() -> (isActive: Bool, camera: String) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return (isCameraActive, activeCamera)
     }
     
     private func processReadBuffer() {
@@ -189,20 +217,25 @@ public final class ProcessChannel {
         switch type {
         case "start":
             let cam = json["camera"] as? String ?? "back"
+            stateLock.lock()
             activeCamera = cam
             isCameraActive = true
+            stateLock.unlock()
             sendOffer()
-            onCameraStateChanged?(true, activeCamera)
+            onCameraStateChanged?(true, cam)
         case "stop":
+            stateLock.lock()
             isCameraActive = false
-            onCameraStateChanged?(false, activeCamera)
+            let camera = activeCamera
+            stateLock.unlock()
+            onCameraStateChanged?(false, camera)
         default:
             break
         }
     }
     
     public func deliverPixelBuffer(_ pixelBuffer: CVPixelBuffer) {
-        guard !isDisconnected, socketFD >= 0 else { return }
+        guard !isTransportDisconnected else { return }
         currentSlotIndex = (currentSlotIndex + 1) % 3
         
         // Feed back camera
@@ -231,7 +264,7 @@ public final class ProcessChannel {
     }
     
     public func deliverCGImage(_ image: CGImage) {
-        guard !isDisconnected, socketFD >= 0 else { return }
+        guard !isTransportDisconnected else { return }
         currentSlotIndex = (currentSlotIndex + 1) % 3
         
         // Feed back camera
@@ -260,7 +293,7 @@ public final class ProcessChannel {
     }
 
     public func deliverCIImage(_ image: CIImage) {
-        guard !isDisconnected, socketFD >= 0 else { return }
+        guard !isTransportDisconnected else { return }
         currentSlotIndex = (currentSlotIndex + 1) % 3
 
         if let bShm = backShm {
@@ -285,7 +318,7 @@ public final class ProcessChannel {
     }
     
     public func deliverMetadata(_ objects: [[String: Any]]) {
-        guard !isDisconnected, socketFD >= 0 else { return }
+        guard !isTransportDisconnected else { return }
         let metaMsg: [String: Any] = [
             "type": "metadata",
             "objects": objects
@@ -294,30 +327,51 @@ public final class ProcessChannel {
     }
     
     private func sendJSON(_ obj: [String: Any]) {
-        guard !isDisconnected, socketFD >= 0,
-              let data = try? JSONSerialization.data(withJSONObject: obj) else { return }
+        guard let data = try? JSONSerialization.data(withJSONObject: obj) else { return }
         var packet = data
         packet.append(0x0a)
-        let written = packet.withUnsafeBytes { rawPtr in
-            write(socketFD, rawPtr.baseAddress!, packet.count)
+        stateLock.lock()
+        guard !isDisconnected, socketFD >= 0 else {
+            stateLock.unlock()
+            return
         }
-        if written <= 0 {
-            disconnect()
+        let descriptor = socketFD
+        let succeeded = packet.withUnsafeBytes { rawPtr -> Bool in
+            guard let baseAddress = rawPtr.baseAddress else { return false }
+            var offset = 0
+            while offset < packet.count {
+                let written = write(descriptor, baseAddress.advanced(by: offset), packet.count - offset)
+                if written > 0 {
+                    offset += written
+                } else if written < 0 && errno == EINTR {
+                    continue
+                } else {
+                    return false
+                }
+            }
+            return true
         }
+        stateLock.unlock()
+        if !succeeded { disconnect() }
     }
     
     public func disconnect() {
-        guard !isDisconnected else { return }
+        stateLock.lock()
+        guard !isDisconnected else {
+            stateLock.unlock()
+            return
+        }
         isDisconnected = true
         isCameraActive = false
+        let descriptor = socketFD
+        socketFD = -1
+        stateLock.unlock()
         
         if let source = readSource {
             source.cancel()
             readSource = nil
-        }
-        if socketFD >= 0 {
-            close(socketFD)
-            socketFD = -1
+        } else if descriptor >= 0 {
+            close(descriptor)
         }
         
         if let fPath = frontShm?.path {

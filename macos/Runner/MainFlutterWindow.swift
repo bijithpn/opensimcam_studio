@@ -9,9 +9,9 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     self.setFrame(windowFrame, display: true)
 
     RegisterGeneratedPlugins(registry: flutterViewController)
-    OpenSimCamBridge.register(with: flutterViewController.registrar(forPlugin: "OpenSimCamBridge"))
+    OpenSCBridge.register(with: flutterViewController.registrar(forPlugin: "OpenSCBridge"))
 
-    self.title = "OpenSimCam Studio"
+    self.title = "OpenSC (Open Source Simulator Cam)"
     self.titlebarAppearsTransparent = true
     self.titleVisibility = .hidden
     self.styleMask.insert(.fullSizeContentView)

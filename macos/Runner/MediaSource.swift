@@ -25,9 +25,9 @@ public protocol MediaSource: AnyObject {
 // MARK: - Passthrough Mode (Mac Screen Behind Simulator Window)
 public final class PassthroughSource: NSObject, MediaSource, SCStreamOutput, SCStreamDelegate {
     public weak var delegate: MediaSourceDelegate?
-    private let captureQueue = DispatchQueue(label: "opensimcam.passthrough.capture")
+    private let captureQueue = DispatchQueue(label: "opensc.passthrough.capture")
     private let stateLock = NSLock()
-    private let geometryQueue = DispatchQueue(label: "opensimcam.passthrough.geometry", qos: .utility)
+    private let geometryQueue = DispatchQueue(label: "opensc.passthrough.geometry", qos: .utility)
     private let fps: Double
     private var generation: UInt64 = 0
     private var stream: SCStream?
@@ -427,7 +427,7 @@ public final class CameraSource: NSObject, MediaSource, AVCaptureVideoDataOutput
     public weak var delegate: MediaSourceDelegate?
     private let captureSession = AVCaptureSession()
     private let videoOutput = AVCaptureVideoDataOutput()
-    private let sessionQueue = DispatchQueue(label: "opensimcam.camera.queue")
+    private let sessionQueue = DispatchQueue(label: "opensc.camera.queue")
     private var isRunning = false
     private let preferredDeviceID: String?
     
@@ -546,7 +546,7 @@ public final class ImageSource: MediaSource {
     public weak var delegate: MediaSourceDelegate?
     public let imagePath: String
     private var timer: DispatchSourceTimer?
-    private let queue = DispatchQueue(label: "opensimcam.image.queue")
+    private let queue = DispatchQueue(label: "opensc.image.queue")
     private var cgImage: CGImage?
     private let fps: Double
     
@@ -594,7 +594,7 @@ public final class VideoSource: MediaSource {
     private var assetReader: AVAssetReader?
     private var trackOutput: AVAssetReaderTrackOutput?
     private var timer: DispatchSourceTimer?
-    private let queue = DispatchQueue(label: "opensimcam.video.queue")
+    private let queue = DispatchQueue(label: "opensc.video.queue")
     private var isLoadingReader = false
     
     public init(videoPath: String) {
@@ -699,7 +699,7 @@ public final class QRCodeSource: MediaSource {
     public weak var delegate: MediaSourceDelegate?
     public let text: String
     private var timer: DispatchSourceTimer?
-    private let queue = DispatchQueue(label: "opensimcam.qr.queue")
+    private let queue = DispatchQueue(label: "opensc.qr.queue")
     private var qrImage: CGImage?
     
     public init(text: String) {
@@ -749,7 +749,7 @@ public final class QRCodeSource: MediaSource {
 public final class TestPatternSource: MediaSource {
     public weak var delegate: MediaSourceDelegate?
     private var timer: DispatchSourceTimer?
-    private let queue = DispatchQueue(label: "opensimcam.testpattern.queue")
+    private let queue = DispatchQueue(label: "opensc.testpattern.queue")
     private var tick = 0
     
     public init() {}

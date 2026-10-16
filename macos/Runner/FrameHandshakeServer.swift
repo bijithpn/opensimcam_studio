@@ -15,7 +15,7 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
     
     private var listeningSockets: [Int32] = []
     private var dispatchSources: [DispatchSourceRead] = []
-    private let serverQueue = DispatchQueue(label: "opensimcam.handshakeserver")
+    private let serverQueue = DispatchQueue(label: "opensc.handshakeserver")
     
     private var activeChannels: [ProcessChannel] = []
     private let channelsLock = NSLock()
@@ -29,7 +29,7 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
         .priorityRequestLow: false
     ])
     private let colorSpace = CGColorSpaceCreateDeviceRGB()
-    private let previewQueue = DispatchQueue(label: "opensimcam.preview.queue", qos: .userInteractive)
+    private let previewQueue = DispatchQueue(label: "opensc.preview.queue", qos: .userInteractive)
     private let sourceLock = NSLock()
     private let previewStateLock = NSLock()
     private var isGeneratingPreview = false
@@ -70,6 +70,13 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
         channelsLock.lock()
         defer { channelsLock.unlock() }
         return activeChannels
+    }
+
+    public func connectionSnapshot() -> [(bundleID: String, simUDID: String, isCameraActive: Bool, camera: String)] {
+        channelsSnapshot().map { channel in
+            let cameraState = channel.cameraStateSnapshot()
+            return (channel.bundleID, channel.simUDID, cameraState.isActive, cameraState.camera)
+        }
     }
     
     private init() {}
@@ -166,14 +173,26 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
         }
         guard clientFD >= 0 else { return }
         
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        let bytesRead = read(clientFD, &buffer, buffer.count)
+        var timeout = timeval(tv_sec: 1, tv_usec: 0)
+        setsockopt(clientFD, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        var handshake = Data()
+        var buffer = [UInt8](repeating: 0, count: 1024)
+        var parsedHandshake: [String: Any]?
+        while handshake.count < 16 * 1024, parsedHandshake == nil {
+            let bytesRead = read(clientFD, &buffer, buffer.count)
+            if bytesRead <= 0 { break }
+            handshake.append(buffer, count: bytesRead)
+            let payload: Data
+            if let newline = handshake.firstIndex(of: 0x0a) {
+                payload = handshake.subdata(in: 0..<newline)
+            } else {
+                payload = handshake
+            }
+            parsedHandshake = try? JSONSerialization.jsonObject(with: payload) as? [String: Any]
+        }
         close(clientFD)
-        
-        guard bytesRead > 0 else { return }
-        let data = Data(buffer[0..<bytesRead])
-        
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+
+        guard let json = parsedHandshake,
               let type = json["type"] as? String, type == "handshake",
               let simUDID = json["simUDID"] as? String,
               let bundleID = json["bundleID"] as? String,
@@ -189,23 +208,41 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
             guard let self = self, let channel = channel else { return }
             self.serverQueue.async {
                 self.channelsLock.lock()
-                self.activeChannels.removeAll { $0 === channel || $0.channelPath == channel.channelPath }
+                self.activeChannels.removeAll { $0 === channel }
+                let replacementExists = self.activeChannels.contains { $0.bundleID == channel.bundleID }
                 self.channelsLock.unlock()
-                DispatchQueue.main.async {
-                    self.onClientDisconnected?(channel.bundleID)
+                guard !replacementExists else { return }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    // A replacement may have connected after the removal was
+                    // queued. Re-check on the server queue before publishing.
+                    self.serverQueue.async {
+                        self.channelsLock.lock()
+                        let stillDisconnected = !self.activeChannels.contains { $0.bundleID == channel.bundleID }
+                        self.channelsLock.unlock()
+                        if stillDisconnected { self.onClientDisconnected?(channel.bundleID) }
+                    }
                 }
             }
         }
         
         channel.onCameraStateChanged = { [weak self, weak channel] isActive, cam in
             guard let self = self, let channel = channel else { return }
-            DispatchQueue.main.async {
-                self.onCameraStateChanged?(channel.bundleID, isActive, cam)
+            self.serverQueue.async {
+                self.channelsLock.lock()
+                let isCurrentChannel = self.activeChannels.contains { $0 === channel }
+                self.channelsLock.unlock()
+                guard isCurrentChannel else { return }
+                DispatchQueue.main.async {
+                    self.onCameraStateChanged?(channel.bundleID, isActive, cam)
+                }
             }
         }
         
         if channel.connect() {
-            // Disconnect and remove any stale channel with same channelPath or bundleID
+            // Disconnect and remove any stale channel with same channelPath or bundleID.
+            // A late disconnect callback from one of these is suppressed if
+            // this replacement is already active.
             channelsLock.lock()
             for oldCh in activeChannels where oldCh.channelPath == channelPath || oldCh.bundleID == bundleID {
                 oldCh.disconnect()

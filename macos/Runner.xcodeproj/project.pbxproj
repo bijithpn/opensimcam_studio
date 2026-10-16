@@ -21,7 +21,7 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
-		24F84ABC98A89B4E7E5363A7 /* OpenSimCamBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1B8A92F9600380A4675F953 /* OpenSimCamBridge.swift */; };
+		24F84ABC98A89B4E7E5363A7 /* OpenSCBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1B8A92F9600380A4675F953 /* OpenSCBridge.swift */; };
 		A18C4F7D52E84BA2B6C0139A /* StudioTray.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C3A9D0E72B541B1A0F34E68 /* StudioTray.swift */; };
 		33036C5925D874A9945E5224 /* SharedMemoryBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 233F7DC8F19AE95B29723F25 /* SharedMemoryBuffer.swift */; };
 		331C80D8294CF71000263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C80D7294CF71000263BE5 /* RunnerTests.swift */; };
@@ -76,7 +76,7 @@
 		331C80D7294CF71000263BE5 /* RunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerTests.swift; sourceTree = "<group>"; };
 		333000ED22D3DE5D00554162 /* Warnings.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Warnings.xcconfig; sourceTree = "<group>"; };
 		335BBD1A22A9A15E00E9071D /* GeneratedPluginRegistrant.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = GeneratedPluginRegistrant.swift; sourceTree = "<group>"; };
-		33CC10ED2044A3C60003C045 /* opensimcam_studio.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = opensimcam_studio.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		33CC10ED2044A3C60003C045 /* OpenSC.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OpenSC.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		33CC10F02044A3C60003C045 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		33CC10F22044A3C60003C045 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = Runner/Assets.xcassets; sourceTree = "<group>"; };
 		33CC10F52044A3C60003C045 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.xib; name = Base; path = Base.lproj/MainMenu.xib; sourceTree = "<group>"; };
@@ -99,7 +99,7 @@
 		9740EEB21CF90195004384FC /* Debug.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
 		C776A564E77D973F46FE931A /* Pods-RunnerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig"; sourceTree = "<group>"; };
 		D0203C2822E33AA659990549 /* Pods-Runner.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.debug.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"; sourceTree = "<group>"; };
-		E1B8A92F9600380A4675F953 /* OpenSimCamBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OpenSimCamBridge.swift; sourceTree = "<group>"; };
+		E1B8A92F9600380A4675F953 /* OpenSCBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OpenSCBridge.swift; sourceTree = "<group>"; };
 		EFE5E7B35CF4E23FFBC3FC78 /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		FF0B0AAB82935ADE4E079847 /* FrameHandshakeServer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FrameHandshakeServer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -172,7 +172,7 @@
 		33CC10EE2044A3C60003C045 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				33CC10ED2044A3C60003C045 /* opensimcam_studio.app */,
+				33CC10ED2044A3C60003C045 /* OpenSC.app */,
 				331C80D5294CF71000263BE5 /* RunnerTests.xctest */,
 			);
 			name = Products;
@@ -210,7 +210,7 @@
 				33E51914231749380026EE4D /* Release.entitlements */,
 				33CC11242044D66E0003C045 /* Resources */,
 				33BA886A226E78AF003329D5 /* Configs */,
-				E1B8A92F9600380A4675F953 /* OpenSimCamBridge.swift */,
+				E1B8A92F9600380A4675F953 /* OpenSCBridge.swift */,
 				233F7DC8F19AE95B29723F25 /* SharedMemoryBuffer.swift */,
 				7894E886F6FE99A8491F1D90 /* MediaSource.swift */,
 				010A301C583B7DAAB2E74E36 /* ProcessChannel.swift */,
@@ -270,7 +270,7 @@
 			);
 			name = Runner;
 			productName = Runner;
-			productReference = 33CC10ED2044A3C60003C045 /* opensimcam_studio.app */;
+			productReference = 33CC10ED2044A3C60003C045 /* OpenSC.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -461,7 +461,7 @@
 				33CC11132044BFA00003C045 /* MainFlutterWindow.swift in Sources */,
 				33CC10F12044A3C60003C045 /* AppDelegate.swift in Sources */,
 				335BBD1B22A9A15E00E9071D /* GeneratedPluginRegistrant.swift in Sources */,
-				24F84ABC98A89B4E7E5363A7 /* OpenSimCamBridge.swift in Sources */,
+				24F84ABC98A89B4E7E5363A7 /* OpenSCBridge.swift in Sources */,
 				A18C4F7D52E84BA2B6C0139A /* StudioTray.swift in Sources */,
 				33036C5925D874A9945E5224 /* SharedMemoryBuffer.swift in Sources */,
 				FEE2E11630750D16D76465CD /* MediaSource.swift in Sources */,
@@ -510,7 +510,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.opensimcam.opensimcamStudio.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/opensimcam_studio.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/opensimcam_studio";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/OpenSC.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/OpenSC";
 			};
 			name = Debug;
 		};
@@ -525,7 +525,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.opensimcam.opensimcamStudio.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/opensimcam_studio.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/opensimcam_studio";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/OpenSC.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/OpenSC";
 			};
 			name = Release;
 		};
@@ -540,7 +540,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.opensimcam.opensimcamStudio.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/opensimcam_studio.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/opensimcam_studio";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/OpenSC.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/OpenSC";
 			};
 			name = Profile;
 		};

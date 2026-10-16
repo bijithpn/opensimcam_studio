@@ -5,17 +5,17 @@ import 'theme/studio_theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const OpenSimCamApp());
+  runApp(const OpenSCApp());
 }
 
-class OpenSimCamApp extends StatelessWidget {
-  const OpenSimCamApp({super.key});
+class OpenSCApp extends StatelessWidget {
+  const OpenSCApp({super.key});
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: 'OpenSimCam Studio',
+    title: 'OpenSC (Open Source Simulator Cam)',
     debugShowCheckedModeBanner: false,
     theme: StudioTheme.dark,
-    home: const OpenSimCamInspectorHome(),
+    home: const OpenSCStudioHome(),
   );
 }
