@@ -64,6 +64,9 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
   // Custom paths
   String? _customImagePath;
   String? _customVideoPath;
+  String _selectedBundledVideoAsset = 'assets/demo_video.mp4';
+  List<String> _bundledVideoAssets = const ['assets/demo_video.mp4'];
+  Future<void>? _bundledVideoAssetsLoad;
   final TextEditingController _qrController = TextEditingController(
     text: 'https://github.com',
   );
@@ -79,6 +82,7 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
       if (!mounted) return;
       unawaited(_fetchCameras());
       unawaited(_fetchSimulators());
+      unawaited(_loadBundledVideoAssets());
       unawaited(_activateSource(_currentSource));
     });
   }
@@ -240,6 +244,27 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
     }
   }
 
+  Future<void> _loadBundledVideoAssets() {
+    return _bundledVideoAssetsLoad ??= _discoverBundledVideoAssets();
+  }
+
+  Future<void> _discoverBundledVideoAssets() async {
+    try {
+      final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
+      final assets = manifest.listAssets().where((asset) {
+        final extension = asset.split('.').last.toLowerCase();
+        return asset.startsWith('assets/') &&
+            const {'mp4', 'mov', 'm4v'}.contains(extension);
+      }).toList()..sort();
+      if (!assets.contains(_selectedBundledVideoAsset)) {
+        assets.insert(0, _selectedBundledVideoAsset);
+      }
+      if (mounted) setState(() => _bundledVideoAssets = assets);
+    } catch (error) {
+      debugPrint('Could not list bundled videos: $error');
+    }
+  }
+
   void _updateAutomaticSetupStatus(List<Map<String, dynamic>> simulators) {
     Map<String, dynamic>? simulator;
     for (final candidate in simulators) {
@@ -318,12 +343,21 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
           break;
 
         case CameraSourceType.demoVideo:
-          final tempDir = Directory.systemTemp;
-          final demoPath = '${tempDir.path}/opensimcam_demo_video.mp4';
-          final file = File(demoPath);
-          if (!await file.exists()) {
-            final byteData = await rootBundle.load('assets/demo_video.mp4');
-            await file.writeAsBytes(byteData.buffer.asUint8List());
+          var demoPath = await _controlChannel.invokeMethod<String>(
+            'getBundledVideoPath',
+            {'asset': _selectedBundledVideoAsset},
+          );
+          if (demoPath == null || demoPath.isEmpty) {
+            final tempDir = Directory.systemTemp;
+            final filename = _selectedBundledVideoAsset.split('/').last;
+            demoPath = '${tempDir.path}/opensimcam_$filename';
+            final file = File(demoPath);
+            if (!await file.exists()) {
+              final byteData = await rootBundle.load(
+                _selectedBundledVideoAsset,
+              );
+              await file.writeAsBytes(byteData.buffer.asUint8List());
+            }
           }
           await _controlChannel.invokeMethod('startVideo', {'path': demoPath});
           break;
@@ -652,6 +686,7 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
       _buildAdjustViewCard(),
       if (_currentSource == CameraSourceType.image ||
           _currentSource == CameraSourceType.video ||
+          _currentSource == CameraSourceType.demoVideo ||
           _currentSource == CameraSourceType.qrCode ||
           _currentSource == CameraSourceType.passthrough) ...[
         const SizedBox(height: 12),
@@ -1178,6 +1213,51 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
             onPressed: _pickImageFile,
             child: const Text('Browse', style: TextStyle(fontSize: 11)),
           ),
+        ],
+      );
+    } else if (_currentSource == CameraSourceType.demoVideo) {
+      content = Row(
+        children: [
+          const Icon(CupertinoIcons.film, size: 14, color: Color(0xFF60A5FA)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: _bundledVideoAssets.contains(_selectedBundledVideoAsset)
+                    ? _selectedBundledVideoAsset
+                    : null,
+                hint: const Text(
+                  'Choose bundled video',
+                  style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
+                ),
+                isExpanded: true,
+                isDense: true,
+                dropdownColor: const Color(0xFF1E2235),
+                borderRadius: BorderRadius.circular(10),
+                style: const TextStyle(fontSize: 11, color: Colors.white),
+                items: _bundledVideoAssets.map((asset) {
+                  return DropdownMenuItem<String>(
+                    value: asset,
+                    child: Text(
+                      asset.split('/').last,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  );
+                }).toList(),
+                onChanged: (asset) {
+                  if (asset == null) return;
+                  setState(() => _selectedBundledVideoAsset = asset);
+                  unawaited(_activateSource(CameraSourceType.demoVideo));
+                },
+              ),
+            ),
+          ),
+          if (_bundledVideoAssets.isEmpty)
+            CupertinoButton(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              onPressed: _loadBundledVideoAssets,
+              child: const Text('Retry', style: TextStyle(fontSize: 10)),
+            ),
         ],
       );
     } else if (_currentSource == CameraSourceType.video) {

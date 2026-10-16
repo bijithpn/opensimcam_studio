@@ -17,7 +17,8 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
     private var dispatchSources: [DispatchSourceRead] = []
     private let serverQueue = DispatchQueue(label: "opensimcam.handshakeserver")
     
-    public private(set) var activeChannels: [ProcessChannel] = []
+    private var activeChannels: [ProcessChannel] = []
+    private let channelsLock = NSLock()
     public var onPreviewFrame: ((Data) -> Void)?
     public var onClientConnected: ((String, String) -> Void)?
     public var onClientDisconnected: ((String) -> Void)?
@@ -64,6 +65,12 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
         defer { sourceLock.unlock() }
         return mediaSource === source
     }
+
+    private func channelsSnapshot() -> [ProcessChannel] {
+        channelsLock.lock()
+        defer { channelsLock.unlock() }
+        return activeChannels
+    }
     
     private init() {}
     
@@ -88,10 +95,12 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
             unlink(path)
         }
         
-        for ch in activeChannels {
+        for ch in channelsSnapshot() {
             ch.disconnect()
         }
+        channelsLock.lock()
         activeChannels.removeAll()
+        channelsLock.unlock()
         
         currentMediaSource = nil
         print("[FrameHandshakeServer] Stopped and cleaned up all sockets.")
@@ -179,7 +188,9 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
         channel.onDisconnected = { [weak self, weak channel] ch in
             guard let self = self, let channel = channel else { return }
             self.serverQueue.async {
+                self.channelsLock.lock()
                 self.activeChannels.removeAll { $0 === channel || $0.channelPath == channel.channelPath }
+                self.channelsLock.unlock()
                 DispatchQueue.main.async {
                     self.onClientDisconnected?(channel.bundleID)
                 }
@@ -195,11 +206,13 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
         
         if channel.connect() {
             // Disconnect and remove any stale channel with same channelPath or bundleID
+            channelsLock.lock()
             for oldCh in activeChannels where oldCh.channelPath == channelPath || oldCh.bundleID == bundleID {
                 oldCh.disconnect()
             }
             activeChannels.removeAll { $0.channelPath == channelPath || $0.bundleID == bundleID }
             activeChannels.append(channel)
+            channelsLock.unlock()
             DispatchQueue.main.async { [weak self] in
                 self?.onClientConnected?(bundleID, simUDID)
             }
@@ -215,7 +228,7 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
     ) {
         guard isCurrentSource(source) else { return }
 
-        for channel in activeChannels {
+        for channel in channelsSnapshot() {
             if let ciImage {
                 channel.deliverCIImage(ciImage)
             } else if let pb = pixelBuffer {
@@ -283,7 +296,7 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
     
     public func mediaSourceDidOutputMetadata(_ source: MediaSource, metadataObjects: [[String: Any]]) {
         guard isCurrentSource(source) else { return }
-        for channel in activeChannels {
+        for channel in channelsSnapshot() {
             channel.deliverMetadata(metadataObjects)
         }
     }
@@ -291,11 +304,11 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
     public func setFitMode(target: String = "both", mode: String) {
         if target == "front" || target == "both" {
             frontTransformConfig.fitMode = mode
-            for ch in activeChannels { ch.frontTransformConfig.fitMode = mode }
+            for ch in channelsSnapshot() { ch.frontTransformConfig.fitMode = mode }
         }
         if target == "back" || target == "both" {
             backTransformConfig.fitMode = mode
-            for ch in activeChannels { ch.backTransformConfig.fitMode = mode }
+            for ch in channelsSnapshot() { ch.backTransformConfig.fitMode = mode }
         }
     }
     
@@ -303,18 +316,18 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
         switch target {
         case "front":
             frontTransformConfig = config
-            for ch in activeChannels {
+            for ch in channelsSnapshot() {
                 ch.frontTransformConfig = config
             }
         case "back":
             backTransformConfig = config
-            for ch in activeChannels {
+            for ch in channelsSnapshot() {
                 ch.backTransformConfig = config
             }
         default: // "both"
             frontTransformConfig = config
             backTransformConfig = config
-            for ch in activeChannels {
+            for ch in channelsSnapshot() {
                 ch.frontTransformConfig = config
                 ch.backTransformConfig = config
             }

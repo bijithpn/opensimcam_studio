@@ -18,8 +18,33 @@ public final class ProcessChannel {
     
     public var isCameraActive = false
     public var activeCamera = "back"
-    public var frontTransformConfig = TransformConfig(fitMode: "fill", zoom: 1.0, offsetX: 0.0, offsetY: 0.0, rotation: 0, mirror: true)
-    public var backTransformConfig = TransformConfig(fitMode: "fill", zoom: 1.0, offsetX: 0.0, offsetY: 0.0, rotation: 0, mirror: false)
+    private let transformLock = NSLock()
+    private var storedFrontTransformConfig = TransformConfig(fitMode: "fill", zoom: 1.0, offsetX: 0.0, offsetY: 0.0, rotation: 0, mirror: true)
+    private var storedBackTransformConfig = TransformConfig(fitMode: "fill", zoom: 1.0, offsetX: 0.0, offsetY: 0.0, rotation: 0, mirror: false)
+    public var frontTransformConfig: TransformConfig {
+        get {
+            transformLock.lock()
+            defer { transformLock.unlock() }
+            return storedFrontTransformConfig
+        }
+        set {
+            transformLock.lock()
+            storedFrontTransformConfig = newValue
+            transformLock.unlock()
+        }
+    }
+    public var backTransformConfig: TransformConfig {
+        get {
+            transformLock.lock()
+            defer { transformLock.unlock() }
+            return storedBackTransformConfig
+        }
+        set {
+            transformLock.lock()
+            storedBackTransformConfig = newValue
+            transformLock.unlock()
+        }
+    }
     
     public var onDisconnected: ((ProcessChannel) -> Void)?
     public var onCameraStateChanged: ((Bool, String) -> Void)?

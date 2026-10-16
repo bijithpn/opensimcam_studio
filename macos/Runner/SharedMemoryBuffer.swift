@@ -29,6 +29,12 @@ public struct TransformConfig {
 }
 
 public final class SharedMemoryBuffer {
+    private static let sharedCIContext = CIContext(options: [
+        .useSoftwareRenderer: false,
+        .priorityRequestLow: false
+    ])
+    private static let sharedColorSpace = CGColorSpaceCreateDeviceRGB()
+
     public let path: String
     public let width: Int
     public let height: Int
@@ -40,11 +46,6 @@ public final class SharedMemoryBuffer {
     private var fileDescriptor: Int32 = -1
     private var mappedMemory: UnsafeMutableRawPointer?
     private let lock = NSLock()
-    private let ciContext = CIContext(options: [
-        .useSoftwareRenderer: false,
-        .priorityRequestLow: false
-    ])
-    private let colorSpace = CGColorSpaceCreateDeviceRGB()
     
     public init(path: String, width: Int = 1920, height: Int = 1080, slotCount: Int = 3) throws {
         self.path = path
@@ -189,13 +190,13 @@ public final class SharedMemoryBuffer {
         let sensorImage = uprightPortraitImage.oriented(.left)
         let sensorBounds = CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height))
         
-        ciContext.render(
+        Self.sharedCIContext.render(
             sensorImage,
             toBitmap: destSlot,
             rowBytes: bytesPerRow,
             bounds: sensorBounds,
             format: .BGRA8,
-            colorSpace: colorSpace
+            colorSpace: Self.sharedColorSpace
         )
     }
     

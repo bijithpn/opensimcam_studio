@@ -387,6 +387,8 @@ public final class PassthroughSource: NSObject, MediaSource, SCStreamOutput, SCS
             displayFrame: snapshot.displayFrame,
             imageExtent: image.extent
         )
+        guard !cropRect.isNull, !cropRect.isEmpty,
+              cropRect.width >= 2, cropRect.height >= 2 else { return }
         let cropped = image.cropped(to: cropRect).transformed(
             by: CGAffineTransform(translationX: -cropRect.minX, y: -cropRect.minY)
         )
@@ -402,7 +404,9 @@ public final class PassthroughSource: NSObject, MediaSource, SCStreamOutput, SCS
 
     private func sourceCropRect(windowFrame: CGRect, displayFrame: CGRect, imageExtent: CGRect) -> CGRect {
         let clipped = windowFrame.intersection(displayFrame)
-        guard !clipped.isNull, displayFrame.width > 0, displayFrame.height > 0 else { return imageExtent }
+        guard !clipped.isNull, !clipped.isEmpty,
+              displayFrame.width > 0, displayFrame.height > 0,
+              imageExtent.width > 0, imageExtent.height > 0 else { return .zero }
         let scaleX = imageExtent.width / displayFrame.width
         let scaleY = imageExtent.height / displayFrame.height
         return CGRect(

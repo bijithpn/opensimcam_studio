@@ -5,6 +5,7 @@ import AVFoundation
 public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
     private var eventSink: FlutterEventSink?
     private var channel: FlutterMethodChannel?
+    private var flutterAssetPathResolver: ((String) -> String?)?
     private var flutterIsReady = false
     private var pendingTrayCalls: [(String, Any?)] = []
 
@@ -25,6 +26,22 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
         
         let instance = OpenSimCamBridge()
         instance.channel = channel
+        instance.flutterAssetPathResolver = { asset in
+            let assetKey = registrar.lookupKey(forAsset: asset)
+            guard !assetKey.isEmpty else { return nil }
+            let frameworkAssets = Bundle.main.bundleURL
+                .appendingPathComponent("Contents/Frameworks/App.framework/Versions/A/Resources/flutter_assets")
+            let assetURL = frameworkAssets.appendingPathComponent(asset)
+            let resourcePath = Bundle.main.path(forResource: assetKey, ofType: nil)
+                ?? URL(string: assetKey, relativeTo: Bundle.main.bundleURL)?.path
+            let candidates: [String?] = [resourcePath, assetURL.path]
+            for path in candidates {
+                if let path, FileManager.default.fileExists(atPath: path) {
+                    return path
+                }
+            }
+            return nil
+        }
         registrar.addMethodCallDelegate(instance, channel: channel)
         eventChannel.setStreamHandler(instance)
 
@@ -174,6 +191,17 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
             }
             server.currentMediaSource = VideoSource(videoPath: path)
             result(true)
+
+        case "getBundledVideoPath":
+            let args = call.arguments as? [String: Any]
+            let asset = args?["asset"] as? String ?? ""
+            guard asset.hasPrefix("assets/"),
+                  !asset.split(separator: "/").contains(".."),
+                  ["mp4", "mov", "m4v"].contains(URL(fileURLWithPath: asset).pathExtension.lowercased()) else {
+                result(nil)
+                return
+            }
+            result(flutterAssetPathResolver?(asset))
             
         case "startQR":
             guard let args = call.arguments as? [String: Any],
@@ -248,7 +276,10 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
             
         case "getBootedSimulators":
             SimulatorManager.backgroundQueue.async {
-                let sims = SimulatorManager.getBootedSimulators().map { [
+                // Running-app lookup invokes simctl once per device. Initial
+                // UI startup only needs the booted devices; the native
+                // background detector publishes app details shortly after.
+                let sims = SimulatorManager.getBootedSimulators(includeRunningApps: false).map { [
                     "name": $0.name,
                     "udid": $0.udid,
                     "isInjected": $0.isInjected,
