@@ -33,6 +33,26 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
             }
         }
         
+        // Hook up client app disconnection notifications
+        FrameHandshakeServer.shared.onClientDisconnected = { [weak instance] bundleID in
+            DispatchQueue.main.async {
+                instance?.channel?.invokeMethod("onClientDisconnected", arguments: [
+                    "bundleId": bundleID
+                ])
+            }
+        }
+        
+        // Hook up camera active state and camera switch notifications
+        FrameHandshakeServer.shared.onCameraStateChanged = { [weak instance] bundleID, isActive, camera in
+            DispatchQueue.main.async {
+                instance?.channel?.invokeMethod("onCameraStateChanged", arguments: [
+                    "bundleId": bundleID,
+                    "isActive": isActive,
+                    "camera": camera
+                ])
+            }
+        }
+        
         // Start automatic simulator detection & dynamic injection
         SimulatorManager.startAutoDetection { [weak instance] sims in
             let simData = sims.map { [
@@ -92,8 +112,15 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
             
         case "setFitMode":
             let args = call.arguments as? [String: Any]
+            let target = args?["target"] as? String ?? "both"
             let mode = args?["mode"] as? String ?? "fill"
-            server.setFitMode(mode)
+            server.setFitMode(target: target, mode: mode)
+            result(true)
+            
+        case "setPreviewCamera":
+            let args = call.arguments as? [String: Any]
+            let camera = args?["camera"] as? String ?? "back"
+            server.previewTargetCamera = camera
             result(true)
             
         case "updateTransformSettings":
@@ -101,6 +128,7 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
                 result(false)
                 return
             }
+            let target = args["target"] as? String ?? "both"
             let fitMode = args["fitMode"] as? String ?? "fill"
             let zoom = CGFloat(args["zoom"] as? Double ?? 1.0)
             let offsetX = CGFloat(args["offsetX"] as? Double ?? 0.0)
@@ -116,7 +144,7 @@ public final class OpenSimCamBridge: NSObject, FlutterPlugin, FlutterStreamHandl
                 rotation: rotation,
                 mirror: mirror
             )
-            server.updateTransformConfig(config)
+            server.updateTransformConfig(target: target, config: config)
             result(true)
             
         case "getCameras":

@@ -46,6 +46,34 @@ enum CameraSourceType {
   const CameraSourceType(this.title, this.icon);
 }
 
+class CameraFraming {
+  String fitMode;
+  double zoom;
+  double offsetX;
+  double offsetY;
+  int rotation;
+  bool mirror;
+
+  CameraFraming({
+    this.fitMode = 'fill',
+    this.zoom = 1.0,
+    this.offsetX = 0.0,
+    this.offsetY = 0.0,
+    this.rotation = 0,
+    required this.mirror,
+  });
+
+  Map<String, dynamic> toMap(String target) => {
+        'target': target,
+        'fitMode': fitMode,
+        'zoom': zoom,
+        'offsetX': offsetX,
+        'offsetY': offsetY,
+        'rotation': rotation,
+        'mirror': mirror,
+      };
+}
+
 class OpenSimCamInspectorHome extends StatefulWidget {
   const OpenSimCamInspectorHome({super.key});
 
@@ -62,12 +90,20 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
 
   int _selectedTab = 0; // 0: Camera, 1: Device, 2: Actions, 3: Settings
   CameraSourceType _currentSource = CameraSourceType.demoVideo;
-  String _fitMode = 'fill'; // Default to "fill" to provide full-screen portrait camera feed!
-  double _zoom = 1.0;
-  double _offsetX = 0.0;
-  double _offsetY = 0.0;
-  int _rotation = 0; // 0, 90, 180, 270
-  bool _mirror = false;
+
+  // Dual camera independent framing configurations
+  final CameraFraming _frontFraming = CameraFraming(mirror: true);
+  final CameraFraming _backFraming = CameraFraming(mirror: false);
+  String _targetCamera = 'both'; // 'both', 'front', 'back'
+  String _previewTarget = 'back'; // 'back', 'front'
+  bool _isSimCameraActive = false;
+  String _simActiveCamera = 'back';
+
+  CameraFraming get _activeFraming {
+    if (_targetCamera == 'front') return _frontFraming;
+    return _backFraming;
+  }
+
   StreamSubscription? _previewSubscription;
   Timer? _statusPollTimer;
   Uint8List? _previewFrame;
@@ -122,8 +158,26 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
             if (mounted) {
               setState(() {
                 _connectedAppBundle = args['bundleId']?.toString();
+                _isSimCameraActive = true;
               });
             }
+          }
+          break;
+        case 'onClientDisconnected':
+          if (mounted) {
+            setState(() {
+              _connectedAppBundle = null;
+              _isSimCameraActive = false;
+            });
+          }
+          break;
+        case 'onCameraStateChanged':
+          if (call.arguments is Map && mounted) {
+            final args = call.arguments as Map;
+            setState(() {
+              _isSimCameraActive = args['isActive'] == true;
+              _simActiveCamera = args['camera']?.toString() ?? 'back';
+            });
           }
           break;
       }
@@ -186,6 +240,14 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
           _bootedSimulators = sims
               .map((s) => Map<String, dynamic>.from(s))
               .toList();
+          // If no simulator or app is running, clear connected state
+          if (_bootedSimulators.isEmpty ||
+              _bootedSimulators.first['runningAppBundle'] == null) {
+            if (_connectedAppBundle != null) {
+              _connectedAppBundle = null;
+              _isSimCameraActive = false;
+            }
+          }
         });
       }
     } catch (e) {
@@ -263,20 +325,67 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
   }
 
   Future<void> _setFitMode(String mode) async {
-    setState(() => _fitMode = mode);
+    setState(() {
+      if (_targetCamera == 'both') {
+        _backFraming.fitMode = mode;
+        _frontFraming.fitMode = mode;
+      } else if (_targetCamera == 'front') {
+        _frontFraming.fitMode = mode;
+      } else {
+        _backFraming.fitMode = mode;
+      }
+    });
     await _updateTransformSettings();
+  }
+
+  Future<void> _setPreviewCamera(String cam) async {
+    setState(() => _previewTarget = cam);
+    try {
+      await _controlChannel.invokeMethod('setPreviewCamera', {'camera': cam});
+    } catch (e) {
+      debugPrint('Error setting preview camera: $e');
+    }
+  }
+
+  void _selectTargetCamera(String target) {
+    setState(() {
+      _targetCamera = target;
+      if (target == 'front') {
+        _setPreviewCamera('front');
+      } else if (target == 'back') {
+        _setPreviewCamera('back');
+      }
+    });
   }
 
   Future<void> _updateTransformSettings() async {
     try {
-      await _controlChannel.invokeMethod('updateTransformSettings', {
-        'fitMode': _fitMode,
-        'zoom': _zoom,
-        'offsetX': _offsetX,
-        'offsetY': _offsetY,
-        'rotation': _rotation,
-        'mirror': _mirror,
-      });
+      if (_targetCamera == 'both') {
+        _frontFraming.fitMode = _backFraming.fitMode;
+        _frontFraming.zoom = _backFraming.zoom;
+        _frontFraming.offsetX = _backFraming.offsetX;
+        _frontFraming.offsetY = _backFraming.offsetY;
+        _frontFraming.rotation = _backFraming.rotation;
+
+        await _controlChannel.invokeMethod(
+          'updateTransformSettings',
+          _backFraming.toMap('back'),
+        );
+        await _controlChannel.invokeMethod(
+          'updateTransformSettings',
+          _frontFraming.toMap('front'),
+        );
+      } else if (_targetCamera == 'front') {
+        await _controlChannel.invokeMethod(
+          'updateTransformSettings',
+          _frontFraming.toMap('front'),
+        );
+      } else {
+        await _controlChannel.invokeMethod(
+          'updateTransformSettings',
+          _backFraming.toMap('back'),
+        );
+      }
     } catch (e) {
       debugPrint('Error updating transform settings: $e');
     }
@@ -284,12 +393,22 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
 
   void _resetTransform() {
     setState(() {
-      _zoom = 1.0;
-      _offsetX = 0.0;
-      _offsetY = 0.0;
-      _rotation = 0;
-      _mirror = false;
-      _fitMode = 'fill';
+      if (_targetCamera == 'front' || _targetCamera == 'both') {
+        _frontFraming.fitMode = 'fill';
+        _frontFraming.zoom = 1.0;
+        _frontFraming.offsetX = 0.0;
+        _frontFraming.offsetY = 0.0;
+        _frontFraming.rotation = 0;
+        _frontFraming.mirror = true;
+      }
+      if (_targetCamera == 'back' || _targetCamera == 'both') {
+        _backFraming.fitMode = 'fill';
+        _backFraming.zoom = 1.0;
+        _backFraming.offsetX = 0.0;
+        _backFraming.offsetY = 0.0;
+        _backFraming.rotation = 0;
+        _backFraming.mirror = false;
+      }
     });
     _updateTransformSettings();
   }
@@ -496,7 +615,7 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
                       ],
                     ),
 
-                  // LIVE badge
+                  // LIVE / STANDBY badge (Top Left)
                   Positioned(
                     top: 8,
                     left: 8,
@@ -510,19 +629,28 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Row(
-                        children: const [
+                        children: [
                           Icon(
                             CupertinoIcons.circle_fill,
                             size: 6,
-                            color: Color(0xFFEF4444),
+                            color: _connectedAppBundle != null
+                                ? const Color(0xFFEF4444)
+                                : const Color(0xFF94A3B8),
                           ),
-                          SizedBox(width: 4),
+                          const SizedBox(width: 4),
                           Text(
-                            'LIVE 1080×1920',
+                            _connectedAppBundle != null
+                                ? (_isSimCameraActive
+                                    ? 'LIVE • ${_simActiveCamera.toUpperCase()}'
+                                    : 'CONNECTED • STANDBY')
+                                : 'STANDBY (NO CLIENT)',
                             style: TextStyle(
                               fontSize: 9,
                               fontWeight: FontWeight.w700,
                               letterSpacing: 0.3,
+                              color: _connectedAppBundle != null
+                                  ? Colors.white
+                                  : const Color(0xFF94A3B8),
                             ),
                           ),
                         ],
@@ -530,31 +658,53 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
                     ),
                   ),
 
-                  // Zoom level badge
+                  // Preview Target & Zoom badge (Top Right)
                   Positioned(
                     top: 8,
                     right: 8,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.65),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        '${_zoom.toStringAsFixed(1)}x',
-                        style: const TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF60A5FA),
+                    child: GestureDetector(
+                      onTap: () {
+                        _setPreviewCamera(_previewTarget == 'back' ? 'front' : 'back');
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.65),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: const Color(0xFF3B82F6).withValues(alpha: 0.4),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              '👁 ${_previewTarget.toUpperCase()}',
+                              style: const TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF60A5FA),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${(_previewTarget == 'front' ? _frontFraming.zoom : _backFraming.zoom).toStringAsFixed(1)}x',
+                              style: const TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white70,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
                   ),
 
-                  // Feed mode badge
+                  // Framing Target mode badge (Bottom Left)
                   Positioned(
                     bottom: 8,
                     left: 8,
@@ -568,11 +718,15 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
-                        'Front & Back Synced',
-                        style: TextStyle(
+                        _targetCamera == 'both'
+                            ? 'Adjusting: Both (Synced)'
+                            : (_targetCamera == 'front'
+                                ? 'Adjusting: Front (Selfie)'
+                                : 'Adjusting: Back Camera'),
+                        style: const TextStyle(
                           fontSize: 9,
                           fontWeight: FontWeight.w600,
-                          color: const Color(0xFF10B981),
+                          color: Color(0xFF10B981),
                         ),
                       ),
                     ),
@@ -660,7 +814,7 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
             label: 'Aspect Ratio',
             control: DropdownButtonHideUnderline(
               child: DropdownButton<String>(
-                value: _fitMode,
+                value: _activeFraming.fitMode,
                 dropdownColor: const Color(0xFF1E2235),
                 borderRadius: BorderRadius.circular(10),
                 isDense: true,
@@ -702,16 +856,18 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
             label: 'Front & Back Cameras',
             control: Row(
               mainAxisSize: MainAxisSize.min,
-              children: const [
-                Icon(
+              children: [
+                const Icon(
                   CupertinoIcons.checkmark_alt_circle_fill,
                   size: 14,
                   color: Color(0xFF10B981),
                 ),
-                SizedBox(width: 4),
+                const SizedBox(width: 4),
                 Text(
-                  'Dual Active',
-                  style: TextStyle(
+                  _isSimCameraActive
+                      ? 'Streaming: ${_simActiveCamera.toUpperCase()}'
+                      : 'Dual Ready',
+                  style: const TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
                     color: Color(0xFF10B981),
@@ -759,14 +915,33 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
               ),
               CupertinoButton(
                 padding: EdgeInsets.zero,
-                minSize: 0,
                 onPressed: _resetTransform,
+                minimumSize: Size(0, 0),
                 child: const Text(
                   'Reset',
                   style: TextStyle(fontSize: 11, color: Color(0xFF60A5FA)),
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 10),
+
+          // Camera Target Selector: Both, Front, Back
+          Container(
+            height: 32,
+            padding: const EdgeInsets.all(2),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E2235),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFF2B324B)),
+            ),
+            child: Row(
+              children: [
+                _buildTargetSegment('both', 'Both (Synced)', CupertinoIcons.arrow_2_circlepath),
+                _buildTargetSegment('front', 'Front Cam', CupertinoIcons.person_crop_circle),
+                _buildTargetSegment('back', 'Back Cam', CupertinoIcons.camera),
+              ],
+            ),
           ),
           const SizedBox(height: 12),
 
@@ -785,7 +960,7 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
-                  '${_zoom.toStringAsFixed(2)}x',
+                  '${_activeFraming.zoom.toStringAsFixed(2)}x',
                   style: const TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.bold,
@@ -804,11 +979,11 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
               thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
             ),
             child: Slider(
-              value: _zoom,
+              value: _activeFraming.zoom,
               min: 0.5,
               max: 3.0,
               onChanged: (val) {
-                setState(() => _zoom = val);
+                setState(() => _activeFraming.zoom = val);
                 _updateTransformSettings();
               },
             ),
@@ -819,10 +994,10 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
             spacing: 6,
             runSpacing: 6,
             children: [0.75, 1.0, 1.25, 1.5, 2.0].map((preset) {
-              final isSelected = (_zoom - preset).abs() < 0.05;
+              final isSelected = (_activeFraming.zoom - preset).abs() < 0.05;
               return GestureDetector(
                 onTap: () {
-                  setState(() => _zoom = preset);
+                  setState(() => _activeFraming.zoom = preset);
                   _updateTransformSettings();
                 },
                 child: Container(
@@ -859,7 +1034,7 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
                 style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
               ),
               Text(
-                '${(_offsetX * 100).toInt()}%',
+                '${(_activeFraming.offsetX * 100).toInt()}%',
                 style: const TextStyle(fontSize: 11, color: Colors.white70),
               ),
             ],
@@ -873,11 +1048,11 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
               thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
             ),
             child: Slider(
-              value: _offsetX,
+              value: _activeFraming.offsetX,
               min: -1.0,
               max: 1.0,
               onChanged: (val) {
-                setState(() => _offsetX = val);
+                setState(() => _activeFraming.offsetX = val);
                 _updateTransformSettings();
               },
             ),
@@ -892,7 +1067,7 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
                 style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
               ),
               Text(
-                '${(_offsetY * 100).toInt()}%',
+                '${(_activeFraming.offsetY * 100).toInt()}%',
                 style: const TextStyle(fontSize: 11, color: Colors.white70),
               ),
             ],
@@ -906,11 +1081,11 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
               thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
             ),
             child: Slider(
-              value: _offsetY,
+              value: _activeFraming.offsetY,
               min: -1.0,
               max: 1.0,
               onChanged: (val) {
-                setState(() => _offsetY = val);
+                setState(() => _activeFraming.offsetY = val);
                 _updateTransformSettings();
               },
             ),
@@ -928,10 +1103,10 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
               ),
               Row(
                 children: [0, 90, 180, 270].map((deg) {
-                  final isSelected = _rotation == deg;
+                  final isSelected = _activeFraming.rotation == deg;
                   return GestureDetector(
                     onTap: () {
-                      setState(() => _rotation = deg);
+                      setState(() => _activeFraming.rotation = deg);
                       _updateTransformSettings();
                     },
                     child: Container(
@@ -966,17 +1141,27 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'Mirror Camera (Selfie)',
-                style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
+              Text(
+                _targetCamera == 'front'
+                    ? 'Mirror Front Camera (Selfie)'
+                    : (_targetCamera == 'back'
+                        ? 'Mirror Back Camera'
+                        : 'Mirror Camera'),
+                style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
               ),
               Transform.scale(
                 scale: 0.75,
                 child: CupertinoSwitch(
-                  value: _mirror,
-                  activeColor: const Color(0xFF3B82F6),
+                  value: _activeFraming.mirror,
+                  activeTrackColor: const Color(0xFF3B82F6),
                   onChanged: (val) {
-                    setState(() => _mirror = val);
+                    setState(() {
+                      _activeFraming.mirror = val;
+                      if (_targetCamera == 'both') {
+                        _frontFraming.mirror = val;
+                        _backFraming.mirror = val;
+                      }
+                    });
                     _updateTransformSettings();
                   },
                 ),
@@ -984,6 +1169,56 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildTargetSegment(String target, String title, IconData icon) {
+    final isSelected = _targetCamera == target;
+    final isSimActive = _isSimCameraActive && _simActiveCamera == target;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => _selectTargetCamera(target),
+        child: Container(
+          decoration: BoxDecoration(
+            color: isSelected ? const Color(0xFF3B82F6) : Colors.transparent,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          alignment: Alignment.center,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 11,
+                color: isSelected ? Colors.white : const Color(0xFF94A3B8),
+              ),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  title,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                    color: isSelected ? Colors.white : const Color(0xFF94A3B8),
+                  ),
+                ),
+              ),
+              if (isSimActive) ...[
+                const SizedBox(width: 4),
+                Container(
+                  width: 5,
+                  height: 5,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF10B981),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1138,15 +1373,15 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
                 height: 8,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: hasBootedSim
+                  color: _connectedAppBundle != null
                       ? const Color(0xFF10B981)
-                      : const Color(0xFFEF4444),
-                  boxShadow: hasBootedSim
+                      : (hasBootedSim
+                          ? const Color(0xFFF59E0B)
+                          : const Color(0xFFEF4444)),
+                  boxShadow: _connectedAppBundle != null
                       ? [
                           BoxShadow(
-                            color: const Color(
-                              0xFF10B981,
-                            ).withValues(alpha: 0.6),
+                            color: const Color(0xFF10B981).withValues(alpha: 0.6),
                             blurRadius: 6,
                           ),
                         ]
@@ -1200,16 +1435,25 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
-                    if (targetBundle != null)
-                      Text(
-                        'App: ${targetBundle.split('.').last}',
-                        style: const TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF6EE7B7),
-                        ),
-                        overflow: TextOverflow.ellipsis,
+                    Text(
+                      _connectedAppBundle != null
+                          ? 'App: ${_connectedAppBundle!.split('.').last} (${_isSimCameraActive ? "Feeding ${_simActiveCamera.toUpperCase()}" : "Connected"})'
+                          : (runningApp != null
+                              ? 'App: ${runningApp.split('.').last} (Standby)'
+                              : (hasBootedSim
+                                  ? 'App: Disconnected / Closed'
+                                  : 'No simulator booted')),
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: _connectedAppBundle != null
+                            ? const Color(0xFF6EE7B7)
+                            : (_isSimCameraActive
+                                ? const Color(0xFF60A5FA)
+                                : const Color(0xFF94A3B8)),
                       ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ],
                 ),
               ),

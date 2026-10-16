@@ -21,6 +21,7 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
     public var onPreviewFrame: ((Data) -> Void)?
     public var onClientConnected: ((String, String) -> Void)?
     public var onClientDisconnected: ((String) -> Void)?
+    public var onCameraStateChanged: ((String, Bool, String) -> Void)?
     
     private let ciContext = CIContext(options: [
         .useSoftwareRenderer: false,
@@ -30,11 +31,10 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
     private let previewQueue = DispatchQueue(label: "opensimcam.preview.queue", qos: .userInteractive)
     private var isGeneratingPreview = false
     private var lastPreviewTime: CFAbsoluteTime = 0
-    public var currentTransformConfig = TransformConfig()
-    public var currentFitMode: String {
-        get { currentTransformConfig.fitMode }
-        set { currentTransformConfig.fitMode = newValue }
-    }
+    
+    public var frontTransformConfig = TransformConfig(fitMode: "fill", zoom: 1.0, offsetX: 0.0, offsetY: 0.0, rotation: 0, mirror: true)
+    public var backTransformConfig = TransformConfig(fitMode: "fill", zoom: 1.0, offsetX: 0.0, offsetY: 0.0, rotation: 0, mirror: false)
+    public var previewTargetCamera: String = "back"
     
     public var currentMediaSource: MediaSource? {
         didSet {
@@ -50,6 +50,31 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
         for path in socketPaths {
             try? startListening(at: path)
         }
+    }
+    
+    public func stop() {
+        for source in dispatchSources {
+            source.cancel()
+        }
+        dispatchSources.removeAll()
+        
+        for fd in listeningSockets {
+            close(fd)
+        }
+        listeningSockets.removeAll()
+        
+        for path in socketPaths {
+            unlink(path)
+        }
+        
+        for ch in activeChannels {
+            ch.disconnect()
+        }
+        activeChannels.removeAll()
+        
+        currentMediaSource?.stop()
+        currentMediaSource = nil
+        print("[FrameHandshakeServer] Stopped and cleaned up all sockets.")
     }
     
     private func startListening(at path: String) throws {
@@ -128,9 +153,32 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
         }
         
         let channel = ProcessChannel(simUDID: simUDID, bundleID: bundleID, channelPath: channelPath)
-        channel.transformConfig = currentTransformConfig
+        channel.frontTransformConfig = frontTransformConfig
+        channel.backTransformConfig = backTransformConfig
+        
+        channel.onDisconnected = { [weak self, weak channel] ch in
+            guard let self = self, let channel = channel else { return }
+            self.serverQueue.async {
+                self.activeChannels.removeAll { $0 === channel || $0.channelPath == channel.channelPath }
+                DispatchQueue.main.async {
+                    self.onClientDisconnected?(channel.bundleID)
+                }
+            }
+        }
+        
+        channel.onCameraStateChanged = { [weak self, weak channel] isActive, cam in
+            guard let self = self, let channel = channel else { return }
+            DispatchQueue.main.async {
+                self.onCameraStateChanged?(channel.bundleID, isActive, cam)
+            }
+        }
+        
         if channel.connect() {
-            activeChannels.removeAll { $0.channelPath == channelPath }
+            // Disconnect and remove any stale channel with same channelPath or bundleID
+            for oldCh in activeChannels where oldCh.channelPath == channelPath || oldCh.bundleID == bundleID {
+                oldCh.disconnect()
+            }
+            activeChannels.removeAll { $0.channelPath == channelPath || $0.bundleID == bundleID }
             activeChannels.append(channel)
             DispatchQueue.main.async { [weak self] in
                 self?.onClientConnected?(bundleID, simUDID)
@@ -162,7 +210,7 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
             }
             
             if let ci = ci {
-                let config = self.currentTransformConfig
+                let config = (self.previewTargetCamera == "front") ? self.frontTransformConfig : self.backTransformConfig
                 previewQueue.async { [weak self] in
                     defer { self?.isGeneratingPreview = false }
                     guard let self = self else { return }
@@ -197,17 +245,36 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
         }
     }
     
-    public func setFitMode(_ mode: String) {
-        currentTransformConfig.fitMode = mode
-        for ch in activeChannels {
-            ch.transformConfig.fitMode = mode
+    public func setFitMode(target: String = "both", mode: String) {
+        if target == "front" || target == "both" {
+            frontTransformConfig.fitMode = mode
+            for ch in activeChannels { ch.frontTransformConfig.fitMode = mode }
+        }
+        if target == "back" || target == "both" {
+            backTransformConfig.fitMode = mode
+            for ch in activeChannels { ch.backTransformConfig.fitMode = mode }
         }
     }
     
-    public func updateTransformConfig(_ config: TransformConfig) {
-        currentTransformConfig = config
-        for ch in activeChannels {
-            ch.transformConfig = config
+    public func updateTransformConfig(target: String = "both", config: TransformConfig) {
+        switch target {
+        case "front":
+            frontTransformConfig = config
+            for ch in activeChannels {
+                ch.frontTransformConfig = config
+            }
+        case "back":
+            backTransformConfig = config
+            for ch in activeChannels {
+                ch.backTransformConfig = config
+            }
+        default: // "both"
+            frontTransformConfig = config
+            backTransformConfig = config
+            for ch in activeChannels {
+                ch.frontTransformConfig = config
+                ch.backTransformConfig = config
+            }
         }
     }
 }

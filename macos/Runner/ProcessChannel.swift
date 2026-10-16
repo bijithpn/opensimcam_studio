@@ -17,11 +17,12 @@ public final class ProcessChannel {
     
     public var isCameraActive = false
     public var activeCamera = "back"
-    public var transformConfig = TransformConfig()
-    public var fitMode: String {
-        get { transformConfig.fitMode }
-        set { transformConfig.fitMode = newValue }
-    }
+    public var frontTransformConfig = TransformConfig(fitMode: "fill", zoom: 1.0, offsetX: 0.0, offsetY: 0.0, rotation: 0, mirror: true)
+    public var backTransformConfig = TransformConfig(fitMode: "fill", zoom: 1.0, offsetX: 0.0, offsetY: 0.0, rotation: 0, mirror: false)
+    
+    public var onDisconnected: ((ProcessChannel) -> Void)?
+    public var onCameraStateChanged: ((Bool, String) -> Void)?
+    private var isDisconnected = false
     private var currentSlotIndex = 0
     
     public init(simUDID: String, bundleID: String, channelPath: String) {
@@ -35,6 +36,9 @@ public final class ProcessChannel {
         guard socketFD >= 0 else {
             return false
         }
+        
+        var nosigpipe: Int32 = 1
+        setsockopt(socketFD, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, socklen_t(MemoryLayout<Int32>.size))
         
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
@@ -121,7 +125,7 @@ public final class ProcessChannel {
     private func startReading() {
         let source = DispatchSource.makeReadSource(fileDescriptor: socketFD, queue: queue)
         source.setEventHandler { [weak self] in
-            guard let self = self else { return }
+            guard let self = self, !self.isDisconnected else { return }
             var buffer = [UInt8](repeating: 0, count: 4096)
             let bytesRead = read(self.socketFD, &buffer, buffer.count)
             if bytesRead > 0 {
@@ -162,19 +166,22 @@ public final class ProcessChannel {
             activeCamera = cam
             isCameraActive = true
             sendOffer()
+            onCameraStateChanged?(true, activeCamera)
         case "stop":
             isCameraActive = false
+            onCameraStateChanged?(false, activeCamera)
         default:
             break
         }
     }
     
     public func deliverPixelBuffer(_ pixelBuffer: CVPixelBuffer) {
+        guard !isDisconnected, socketFD >= 0 else { return }
         currentSlotIndex = (currentSlotIndex + 1) % 3
         
         // Feed back camera
         if let bShm = backShm {
-            bShm.writePixelBuffer(pixelBuffer, slot: currentSlotIndex, config: transformConfig)
+            bShm.writePixelBuffer(pixelBuffer, slot: currentSlotIndex, config: backTransformConfig)
             let backMsg: [String: Any] = [
                 "type": "frame",
                 "camera": "back",
@@ -186,7 +193,7 @@ public final class ProcessChannel {
         
         // Feed front camera
         if let fShm = frontShm {
-            fShm.writePixelBuffer(pixelBuffer, slot: currentSlotIndex, config: transformConfig)
+            fShm.writePixelBuffer(pixelBuffer, slot: currentSlotIndex, config: frontTransformConfig)
             let frontMsg: [String: Any] = [
                 "type": "frame",
                 "camera": "front",
@@ -198,11 +205,12 @@ public final class ProcessChannel {
     }
     
     public func deliverCGImage(_ image: CGImage) {
+        guard !isDisconnected, socketFD >= 0 else { return }
         currentSlotIndex = (currentSlotIndex + 1) % 3
         
         // Feed back camera
         if let bShm = backShm {
-            bShm.writeCGImage(image, slot: currentSlotIndex, config: transformConfig)
+            bShm.writeCGImage(image, slot: currentSlotIndex, config: backTransformConfig)
             let backMsg: [String: Any] = [
                 "type": "frame",
                 "camera": "back",
@@ -214,7 +222,7 @@ public final class ProcessChannel {
         
         // Feed front camera
         if let fShm = frontShm {
-            fShm.writeCGImage(image, slot: currentSlotIndex, config: transformConfig)
+            fShm.writeCGImage(image, slot: currentSlotIndex, config: frontTransformConfig)
             let frontMsg: [String: Any] = [
                 "type": "frame",
                 "camera": "front",
@@ -226,6 +234,7 @@ public final class ProcessChannel {
     }
     
     public func deliverMetadata(_ objects: [[String: Any]]) {
+        guard !isDisconnected, socketFD >= 0 else { return }
         let metaMsg: [String: Any] = [
             "type": "metadata",
             "objects": objects
@@ -234,18 +243,42 @@ public final class ProcessChannel {
     }
     
     private func sendJSON(_ obj: [String: Any]) {
-        guard socketFD >= 0,
+        guard !isDisconnected, socketFD >= 0,
               let data = try? JSONSerialization.data(withJSONObject: obj) else { return }
         var packet = data
         packet.append(0x0a)
-        packet.withUnsafeBytes { rawPtr in
-            _ = write(socketFD, rawPtr.baseAddress!, packet.count)
+        let written = packet.withUnsafeBytes { rawPtr in
+            write(socketFD, rawPtr.baseAddress!, packet.count)
+        }
+        if written <= 0 {
+            disconnect()
         }
     }
     
     public func disconnect() {
-        readSource?.cancel()
-        readSource = nil
+        guard !isDisconnected else { return }
+        isDisconnected = true
         isCameraActive = false
+        
+        if let source = readSource {
+            source.cancel()
+            readSource = nil
+        }
+        if socketFD >= 0 {
+            close(socketFD)
+            socketFD = -1
+        }
+        
+        if let fPath = frontShm?.path {
+            frontShm = nil
+            unlink(fPath)
+        }
+        if let bPath = backShm?.path {
+            backShm = nil
+            unlink(bPath)
+        }
+        
+        print("[ProcessChannel] Disconnected from app '\(bundleID)' in simulator '\(simUDID)'")
+        onDisconnected?(self)
     }
 }
