@@ -19,6 +19,14 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
     
     private var activeChannels: [ProcessChannel] = []
     private let channelsLock = NSLock()
+    private let lifecycleLock = NSLock()
+    private var isStopping = false
+    private var connectedChannelIDs = Set<ObjectIdentifier>()
+    private var reconnectingChannelPaths = Set<String>()
+    private var reconnectTargets: [String: ReconnectTarget] = [:]
+    private var reconnectAttempts: [String: Int] = [:]
+    private var disconnectedNotifications = Set<String>()
+    private let reconnectGracePeriod: TimeInterval = 2.0
     public var onPreviewFrame: ((Data) -> Void)?
     public var onClientConnected: ((String, String) -> Void)?
     public var onClientDisconnected: ((String) -> Void)?
@@ -40,6 +48,12 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
     public var previewTargetCamera: String = "back"
     
     private var mediaSource: MediaSource?
+
+    private struct ReconnectTarget {
+        let simUDID: String
+        let bundleID: String
+        let channelPath: String
+    }
     public var currentMediaSource: MediaSource? {
         get {
             sourceLock.lock()
@@ -82,12 +96,18 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
     private init() {}
     
     public func start() {
+        lifecycleLock.lock()
+        isStopping = false
+        lifecycleLock.unlock()
         for path in socketPaths {
             try? startListening(at: path)
         }
     }
     
     public func stop() {
+        lifecycleLock.lock()
+        isStopping = true
+        lifecycleLock.unlock()
         for source in dispatchSources {
             source.cancel()
         }
@@ -203,30 +223,46 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
         let channel = ProcessChannel(simUDID: simUDID, bundleID: bundleID, channelPath: channelPath)
         channel.frontTransformConfig = frontTransformConfig
         channel.backTransformConfig = backTransformConfig
-        
-        channel.onDisconnected = { [weak self, weak channel] ch in
+
+        cancelReconnects(bundleID: bundleID)
+        configureCallbacks(for: channel)
+        if channel.connect(), channel.isTransportConnected {
+            installConnectedChannel(channel)
+            publishConnected(bundleID: bundleID, simUDID: simUDID)
+        } else {
+            beginReconnect(ReconnectTarget(
+                simUDID: simUDID,
+                bundleID: bundleID,
+                channelPath: channelPath
+            ))
+        }
+    }
+
+    private func configureCallbacks(for channel: ProcessChannel) {
+        channel.onDisconnected = { [weak self, weak channel] _ in
             guard let self = self, let channel = channel else { return }
             self.serverQueue.async {
+                let channelID = ObjectIdentifier(channel)
+                let hadBeenConnected = self.connectedChannelIDs.remove(channelID) != nil
                 self.channelsLock.lock()
                 self.activeChannels.removeAll { $0 === channel }
                 let replacementExists = self.activeChannels.contains { $0.bundleID == channel.bundleID }
                 self.channelsLock.unlock()
-                guard !replacementExists else { return }
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
-                    // A replacement may have connected after the removal was
-                    // queued. Re-check on the server queue before publishing.
-                    self.serverQueue.async {
-                        self.channelsLock.lock()
-                        let stillDisconnected = !self.activeChannels.contains { $0.bundleID == channel.bundleID }
-                        self.channelsLock.unlock()
-                        if stillDisconnected { self.onClientDisconnected?(channel.bundleID) }
-                    }
+                guard !self.isServerStopping, !replacementExists else { return }
+
+                let target = ReconnectTarget(
+                    simUDID: channel.simUDID,
+                    bundleID: channel.bundleID,
+                    channelPath: channel.channelPath
+                )
+                if hadBeenConnected {
+                    self.scheduleDisconnectedNotification(for: target)
                 }
+                self.beginReconnect(target)
             }
         }
-        
-        channel.onCameraStateChanged = { [weak self, weak channel] isActive, cam in
+
+        channel.onCameraStateChanged = { [weak self, weak channel] isActive, camera in
             guard let self = self, let channel = channel else { return }
             self.serverQueue.async {
                 self.channelsLock.lock()
@@ -234,25 +270,132 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
                 self.channelsLock.unlock()
                 guard isCurrentChannel else { return }
                 DispatchQueue.main.async {
-                    self.onCameraStateChanged?(channel.bundleID, isActive, cam)
+                    self.onCameraStateChanged?(channel.bundleID, isActive, camera)
                 }
             }
         }
-        
-        if channel.connect() {
-            // Disconnect and remove any stale channel with same channelPath or bundleID.
-            // A late disconnect callback from one of these is suppressed if
-            // this replacement is already active.
-            channelsLock.lock()
-            for oldCh in activeChannels where oldCh.channelPath == channelPath || oldCh.bundleID == bundleID {
-                oldCh.disconnect()
+    }
+
+    private var isServerStopping: Bool {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        return isStopping
+    }
+
+    /// Called on `serverQueue`; replacing the channel invalidates any retry
+    /// loop associated with that app bundle.
+    private func cancelReconnects(bundleID: String) {
+        let paths = reconnectTargets.values
+            .filter { $0.bundleID == bundleID }
+            .map(\.channelPath)
+        for path in paths {
+            reconnectingChannelPaths.remove(path)
+            reconnectTargets.removeValue(forKey: path)
+            reconnectAttempts.removeValue(forKey: path)
+            disconnectedNotifications.remove(path)
+        }
+    }
+
+    /// Called on `serverQueue` when a handshake arrives or an active socket
+    /// drops. Retry the app's advertised endpoint with bounded backoff; the
+    /// app stays alive, so its camera plugin and Flutter dev session are not
+    /// restarted.
+    private func beginReconnect(_ target: ReconnectTarget) {
+        guard !isServerStopping else { return }
+        channelsLock.lock()
+        let alreadyConnected = activeChannels.contains {
+            $0.channelPath == target.channelPath || $0.bundleID == target.bundleID
+        }
+        channelsLock.unlock()
+        guard !alreadyConnected,
+              reconnectingChannelPaths.insert(target.channelPath).inserted else { return }
+        reconnectTargets[target.channelPath] = target
+        reconnectAttempts[target.channelPath] = 0
+        scheduleReconnectAttempt(target)
+    }
+
+    private func scheduleReconnectAttempt(_ target: ReconnectTarget) {
+        let path = target.channelPath
+        guard reconnectingChannelPaths.contains(path), !isServerStopping else { return }
+        let attempt = (reconnectAttempts[path] ?? 0) + 1
+        reconnectAttempts[path] = attempt
+        let delay = min(4.0, 0.35 * pow(1.7, Double(attempt - 1)))
+
+        serverQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self = self,
+                  self.reconnectingChannelPaths.contains(path),
+                  !self.isServerStopping else { return }
+
+            self.channelsLock.lock()
+            let replacementExists = self.activeChannels.contains {
+                $0.channelPath == path || $0.bundleID == target.bundleID
             }
-            activeChannels.removeAll { $0.channelPath == channelPath || $0.bundleID == bundleID }
-            activeChannels.append(channel)
-            channelsLock.unlock()
-            DispatchQueue.main.async { [weak self] in
-                self?.onClientConnected?(bundleID, simUDID)
+            self.channelsLock.unlock()
+            guard !replacementExists else {
+                self.finishReconnect(path: path)
+                return
             }
+
+            let channel = ProcessChannel(
+                simUDID: target.simUDID,
+                bundleID: target.bundleID,
+                channelPath: target.channelPath
+            )
+            channel.frontTransformConfig = self.frontTransformConfig
+            channel.backTransformConfig = self.backTransformConfig
+            self.configureCallbacks(for: channel)
+
+            if channel.connect(), channel.isTransportConnected {
+                self.finishReconnect(path: path)
+                self.installConnectedChannel(channel)
+                self.publishConnected(bundleID: target.bundleID, simUDID: target.simUDID)
+            } else {
+                self.scheduleReconnectAttempt(target)
+            }
+        }
+    }
+
+    private func finishReconnect(path: String) {
+        reconnectingChannelPaths.remove(path)
+        reconnectTargets.removeValue(forKey: path)
+        reconnectAttempts.removeValue(forKey: path)
+        disconnectedNotifications.remove(path)
+    }
+
+    private func scheduleDisconnectedNotification(for target: ReconnectTarget) {
+        let path = target.channelPath
+        serverQueue.asyncAfter(deadline: .now() + reconnectGracePeriod) { [weak self] in
+            guard let self = self,
+                  self.reconnectingChannelPaths.contains(path),
+                  self.disconnectedNotifications.insert(path).inserted else { return }
+            self.channelsLock.lock()
+            let stillDisconnected = !self.activeChannels.contains { $0.bundleID == target.bundleID }
+            self.channelsLock.unlock()
+            if stillDisconnected { self.onClientDisconnected?(target.bundleID) }
+        }
+    }
+
+    private func installConnectedChannel(_ channel: ProcessChannel) {
+        channelsLock.lock()
+        let staleChannels = activeChannels.filter {
+            $0.channelPath == channel.channelPath || $0.bundleID == channel.bundleID
+        }
+        for oldChannel in staleChannels {
+            connectedChannelIDs.remove(ObjectIdentifier(oldChannel))
+            oldChannel.disconnect()
+        }
+        activeChannels.removeAll {
+            $0.channelPath == channel.channelPath || $0.bundleID == channel.bundleID
+        }
+        activeChannels.append(channel)
+        connectedChannelIDs.insert(ObjectIdentifier(channel))
+        channelsLock.unlock()
+        cancelReconnects(bundleID: channel.bundleID)
+    }
+
+    private func publishConnected(bundleID: String, simUDID: String) {
+        DispatchQueue.main.async { [weak self] in
+            self?.onClientConnected?(bundleID, simUDID)
         }
     }
     

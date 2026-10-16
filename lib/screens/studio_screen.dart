@@ -101,6 +101,9 @@ class _OpenSCStudioHomeState extends State<OpenSCStudioHome> {
         case 'onTrayStartSetup':
           unawaited(_startSimulatorSetup());
           break;
+        case 'onTrayOpenSimulator':
+          unawaited(_openSimulator());
+          break;
         case 'onTrayRefresh':
           unawaited(_fetchCameras());
           unawaited(_fetchSimulators());
@@ -280,7 +283,7 @@ class _OpenSCStudioHomeState extends State<OpenSCStudioHome> {
       return;
     }
     const message =
-        'Camera setup is ready. The running app was left untouched; if it was open before setup, it must be relaunched to load the camera plugin.';
+        'Camera loader is ready. If this app was already open before setup, relaunch the app once to load the camera plugin. Keep Simulator running.';
     if (_simulatorSetupMessage == message) return;
     final isInjected = simulator['isInjected'] == true;
     setState(() {
@@ -296,6 +299,22 @@ class _OpenSCStudioHomeState extends State<OpenSCStudioHome> {
 
   void _setTraySetupError(String? message) {
     _controlChannel.invokeMethod('setTraySetupError', {'message': message});
+  }
+
+  Future<void> _openSimulator() async {
+    try {
+      await _controlChannel.invokeMethod<bool>('openSimulator');
+    } on PlatformException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message ?? 'Could not open Simulator.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open Simulator: $error')),
+      );
+    }
   }
 
   Future<void> _activateSource(CameraSourceType source) async {
@@ -523,7 +542,7 @@ class _OpenSCStudioHomeState extends State<OpenSCStudioHome> {
             ? 'Setup is ready. Launch an app in the simulator to connect.'
             : _connectedAppBundle == appBundle
             ? 'Setup is ready. The current camera connection was left running.'
-            : 'Setup is ready. ${appBundle.split('.').last} was left running; the camera plugin loads when that app next launches.';
+            : 'Setup is ready. If ${appBundle.split('.').last} was already open, relaunch that app once to load the camera plugin. Keep Simulator running.';
       });
     } on PlatformException catch (error) {
       debugPrint('Simulator setup failed: ${error.code} ${error.message}');
@@ -1377,6 +1396,7 @@ class _OpenSCStudioHomeState extends State<OpenSCStudioHome> {
       setupMessage: _simulatorSetupMessage,
       setupError: _simulatorSetupError,
       onStartSetup: _startSimulatorSetup,
+      onOpenSimulator: _openSimulator,
     );
   }
 

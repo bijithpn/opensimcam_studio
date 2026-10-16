@@ -7,6 +7,7 @@ final class StudioTrayModel: ObservableObject {
     @Published var simulatorName = "Looking for simulator…"
     @Published var appName = "Waiting for an app"
     @Published var connectionStatus = "Searching"
+    @Published var hasBootedSimulator = false
     @Published var isConnected = false
     @Published var isSettingUp = false
     @Published var setupError: String?
@@ -14,6 +15,7 @@ final class StudioTrayModel: ObservableObject {
 
     var onOpenStudio: (() -> Void)?
     var onStartSetup: (() -> Void)?
+    var onOpenSimulator: (() -> Void)?
     var onRefresh: (() -> Void)?
     var onSourceChanged: ((String) -> Void)?
 }
@@ -30,12 +32,14 @@ final class StudioTrayController: NSObject, NSPopoverDelegate {
     func install(
         onOpenStudio: @escaping () -> Void,
         onStartSetup: @escaping () -> Void,
+        onOpenSimulator: @escaping () -> Void,
         onRefresh: @escaping () -> Void,
         onSourceChanged: @escaping (String) -> Void
     ) {
         guard statusItem == nil else { return }
         model.onOpenStudio = onOpenStudio
         model.onStartSetup = onStartSetup
+        model.onOpenSimulator = onOpenSimulator
         model.onRefresh = onRefresh
         model.onSourceChanged = onSourceChanged
 
@@ -65,7 +69,7 @@ final class StudioTrayController: NSObject, NSPopoverDelegate {
         // are immediately discoverable. Defer until AppKit has attached the
         // status item to the menu bar.
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(350)) { [weak self] in
-            self?.showPopover()
+            self?.showPopover(retriesRemaining: 8)
         }
     }
 
@@ -81,8 +85,18 @@ final class StudioTrayController: NSObject, NSPopoverDelegate {
         statusItem?.button?.highlight(false)
     }
 
-    private func showPopover() {
-        guard !popover.isShown, let button = statusItem?.button else { return }
+    private func showPopover(retriesRemaining: Int = 0) {
+        guard !popover.isShown else { return }
+        guard let button = statusItem?.button,
+              button.window != nil,
+              button.bounds.width > 0,
+              button.bounds.height > 0 else {
+            guard retriesRemaining > 0 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(180)) { [weak self] in
+                self?.showPopover(retriesRemaining: retriesRemaining - 1)
+            }
+            return
+        }
         // Anchor a little inside the status item rather than at its full lower
         // edge. AppKit's default popover offset otherwise leaves a visible gap
         // between the tray and the menu bar on recent macOS releases.
@@ -114,6 +128,7 @@ final class StudioTrayController: NSObject, NSPopoverDelegate {
 
     func updateSimulators(_ simulators: [BootedSimulator]) {
         let simulator = simulators.first
+        model.hasBootedSimulator = simulator != nil
         model.simulatorName = simulator?.name ?? "No booted simulator"
         model.appName = simulator?.runningAppBundle.map {
             $0.components(separatedBy: ".").last ?? $0
@@ -255,8 +270,11 @@ private struct StudioTrayContent: View {
             .padding(.top, 4)
 
             Button {
-                model.isSettingUp = true
-                model.onStartSetup?()
+                if model.hasBootedSimulator {
+                    model.onStartSetup?()
+                } else {
+                    model.onOpenSimulator?()
+                }
             } label: {
                 HStack(spacing: 7) {
                     if model.isSettingUp {
@@ -268,7 +286,9 @@ private struct StudioTrayContent: View {
                     } else {
                         Image(systemName: "bolt.horizontal.circle")
                     }
-                    Text(model.isSettingUp ? "Applying camera setup…" : "Apply Camera Setup")
+                    Text(model.isSettingUp
+                         ? "Applying camera setup…"
+                         : model.hasBootedSimulator ? "Apply Camera Setup" : "Open Simulator")
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: 31)
@@ -276,8 +296,18 @@ private struct StudioTrayContent: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(Color(red: 0.12, green: 0.46, blue: 0.88))
-            .disabled(model.isSettingUp || model.simulatorName == "No booted simulator")
+            .disabled(model.isSettingUp)
             .padding(.top, 10)
+
+            if model.hasBootedSimulator && !model.isConnected &&
+                model.appName != "Waiting for an app" &&
+                model.connectionStatus == "Camera ready" {
+                Text("If this app was already open before setup, relaunch the app once to load the camera plugin. Keep Simulator running.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 7)
+            }
 
             if let setupError = model.setupError {
                 HStack(alignment: .top, spacing: 6) {

@@ -1,6 +1,7 @@
 import Foundation
 import FlutterMacOS
 import AVFoundation
+import AppKit
 
 public final class OpenSCBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
     private var eventSink: FlutterEventSink?
@@ -54,6 +55,9 @@ public final class OpenSCBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
                 },
                 onStartSetup: { [weak instance] in
                     instance?.invokeFlutterFromTray("onTrayStartSetup")
+                },
+                onOpenSimulator: { [weak instance] in
+                    instance?.invokeFlutterFromTray("onTrayOpenSimulator")
                 },
                 onRefresh: { [weak instance] in
                     instance?.invokeFlutterFromTray("onTrayRefresh")
@@ -194,6 +198,34 @@ public final class OpenSCBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
                 StudioTrayController.shared.setSetupError(message)
             }
             result(true)
+
+        case "openSimulator":
+            guard let simulatorURL = NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: "com.apple.iphonesimulator"
+            ) else {
+                result(FlutterError(
+                    code: "SIMULATOR_APP_NOT_FOUND",
+                    message: "Simulator.app was not found. Install or select Xcode in Xcode Settings > Locations.",
+                    details: nil
+                ))
+                return
+            }
+            NSWorkspace.shared.openApplication(
+                at: simulatorURL,
+                configuration: NSWorkspace.OpenConfiguration()
+            ) { _, error in
+                DispatchQueue.main.async {
+                    if let error {
+                        result(FlutterError(
+                            code: "SIMULATOR_LAUNCH_FAILED",
+                            message: error.localizedDescription,
+                            details: nil
+                        ))
+                    } else {
+                        result(true)
+                    }
+                }
+            }
 
         case "startPassthrough":
             server.currentMediaSource = PassthroughSource(fps: 30.0)

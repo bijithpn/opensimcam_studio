@@ -22,6 +22,7 @@ class SimulatorCameraPanel extends StatelessWidget {
     required this.setupMessage,
     required this.setupError,
     required this.onStartSetup,
+    required this.onOpenSimulator,
     super.key,
   });
 
@@ -38,6 +39,7 @@ class SimulatorCameraPanel extends StatelessWidget {
   final String? setupMessage;
   final String? setupError;
   final VoidCallback onStartSetup;
+  final VoidCallback onOpenSimulator;
 
   bool get _hasSimulator => simulatorName != null;
 
@@ -113,9 +115,11 @@ class SimulatorCameraPanel extends StatelessWidget {
           SizedBox(
             height: 34,
             child: ElevatedButton(
-              onPressed: _hasSimulator && !isSettingUp && !isDiscovering
+              onPressed: isDiscovering || isSettingUp
+                  ? null
+                  : _hasSimulator
                   ? onStartSetup
-                  : null,
+                  : onOpenSimulator,
               style:
                   ElevatedButton.styleFrom(
                     elevation: 0,
@@ -161,7 +165,7 @@ class SimulatorCameraPanel extends StatelessWidget {
                         color: Colors.white,
                       ),
                     )
-                  : const Text('Start Setup'),
+                  : Text(_hasSimulator ? 'Start Setup' : 'Open Simulator'),
             ),
           ),
         ],

@@ -198,6 +198,12 @@ public final class ProcessChannel {
         defer { stateLock.unlock() }
         return (isCameraActive, activeCamera)
     }
+
+    public var isTransportConnected: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return !isDisconnected && socketFD >= 0
+    }
     
     private func processReadBuffer() {
         while let newlineIndex = readBuffer.firstIndex(of: 0x0a) {
