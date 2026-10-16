@@ -1,6 +1,5 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
+import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
 
 import '../theme/studio_theme.dart';
 
@@ -10,7 +9,6 @@ class GlassPanel extends StatelessWidget {
     this.padding = const EdgeInsets.all(14),
     this.radius = 18,
     this.tint = StudioColors.panel,
-    this.blurSigma = 0,
     super.key,
   });
 
@@ -18,34 +16,28 @@ class GlassPanel extends StatelessWidget {
   final EdgeInsetsGeometry padding;
   final double radius;
   final Color tint;
-  final double blurSigma;
 
   @override
   Widget build(BuildContext context) {
-    final surface = Container(
-      padding: padding,
-      decoration: BoxDecoration(
-        color: tint,
-        borderRadius: BorderRadius.circular(radius),
-        border: Border.all(color: StudioColors.border),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x20000000),
-            blurRadius: 18,
-            offset: Offset(0, 4),
-          ),
-        ],
+    return LiquidGlass(
+      shape: LiquidRoundedSuperellipse(borderRadius: radius),
+      clipBehavior: Clip.antiAlias,
+      child: Container(
+        padding: padding,
+        decoration: BoxDecoration(
+          color: tint.withValues(alpha: .14),
+          borderRadius: BorderRadius.circular(radius),
+          border: Border.all(color: StudioColors.border),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x20000000),
+              blurRadius: 18,
+              offset: Offset(0, 4),
+            ),
+          ],
+        ),
+        child: child,
       ),
-      child: child,
-    );
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(radius),
-      child: blurSigma > 0
-          ? BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
-              child: surface,
-            )
-          : surface,
     );
   }
 }

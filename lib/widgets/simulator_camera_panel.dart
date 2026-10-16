@@ -57,7 +57,6 @@ class SimulatorCameraPanel extends StatelessWidget {
     return GlassPanel(
       padding: const EdgeInsets.all(18),
       radius: 20,
-      blurSigma: 22,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,

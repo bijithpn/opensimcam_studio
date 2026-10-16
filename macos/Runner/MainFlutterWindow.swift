@@ -16,7 +16,14 @@ class MainFlutterWindow: NSWindow {
     self.titleVisibility = .hidden
     self.styleMask.insert(.fullSizeContentView)
     self.isMovableByWindowBackground = true
-    self.backgroundColor = NSColor(red: 0.07, green: 0.08, blue: 0.12, alpha: 1.0)
+    self.isOpaque = false
+    self.backgroundColor = .clear
+    self.contentView?.wantsLayer = true
+    self.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
+    self.contentView?.layer?.isOpaque = false
+    flutterViewController.view.wantsLayer = true
+    flutterViewController.view.layer?.backgroundColor = NSColor.clear.cgColor
+    flutterViewController.view.layer?.isOpaque = false
     
     self.setContentSize(NSSize(width: 360, height: 720))
     self.minSize = NSSize(width: 340, height: 600)

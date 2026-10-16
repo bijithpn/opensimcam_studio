@@ -4,6 +4,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
 import '../models/camera_framing.dart';
 import '../models/camera_source_type.dart';
 import '../theme/studio_theme.dart';
@@ -461,46 +462,52 @@ class _OpenSimCamInspectorHomeState extends State<OpenSimCamInspectorHome> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: StudioColors.canvas,
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 28, 24, 22),
-          child: Column(
-            children: [
-              _buildAppHeader(),
-              const SizedBox(height: 18),
-              Expanded(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final wide = constraints.maxWidth >= 900;
-                    if (!wide) {
-                      return SingleChildScrollView(
-                        child: Column(
+      body: LiquidGlassLayer(
+        settings: StudioGlass.settings,
+        child: ScrollConfiguration(
+          behavior: ScrollBehavior().copyWith(scrollbars: false),
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 28, 24, 22),
+              child: Column(
+                children: [
+                  _buildAppHeader(),
+                  const SizedBox(height: 18),
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final wide = constraints.maxWidth >= 900;
+                        if (!wide) {
+                          return SingleChildScrollView(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                _buildSimulatorCameraBottomCard(),
+                                const SizedBox(height: 14),
+                                SizedBox(
+                                  height: 360,
+                                  child: _buildWorkspacePreview(),
+                                ),
+                                const SizedBox(height: 16),
+                                _buildSettingsContents(),
+                              ],
+                            ),
+                          );
+                        }
+                        return Row(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            _buildSimulatorCameraBottomCard(),
-                            const SizedBox(height: 14),
-                            SizedBox(
-                              height: 360,
-                              child: _buildWorkspacePreview(),
-                            ),
-                            const SizedBox(height: 16),
-                            _buildSettingsContents(),
+                            Expanded(flex: 7, child: _buildWorkspacePreview()),
+                            const SizedBox(width: 18),
+                            SizedBox(width: 370, child: _buildInspector()),
                           ],
-                        ),
-                      );
-                    }
-                    return Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Expanded(flex: 7, child: _buildWorkspacePreview()),
-                        const SizedBox(width: 18),
-                        SizedBox(width: 370, child: _buildInspector()),
-                      ],
-                    );
-                  },
-                ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
