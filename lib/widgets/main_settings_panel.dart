@@ -273,16 +273,6 @@ class _MainSettingsPanelState extends State<MainSettingsPanel> {
             ],
           ),
         ),
-
-        _buildSectionDivider(),
-
-        // Live Viewfinder Launcher Button
-        _buildSmallButton(
-          label: 'Open Live Viewfinder Preview',
-          icon: CupertinoIcons.viewfinder,
-          isPrimary: true,
-          onTap: widget.onOpenViewfinder ?? () {},
-        ),
       ],
     );
   }
@@ -1119,10 +1109,5 @@ class _MainSettingsPanelState extends State<MainSettingsPanel> {
   Widget _buildSeparator() => const Padding(
     padding: EdgeInsets.symmetric(vertical: 5),
     child: Divider(color: Color(0x12FFFFFF), height: 1),
-  );
-
-  Widget _buildSectionDivider() => const Padding(
-    padding: EdgeInsets.symmetric(vertical: 12),
-    child: Divider(color: Color(0x1EFFFFFF), height: 1),
   );
 }

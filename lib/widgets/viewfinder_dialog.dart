@@ -78,7 +78,7 @@ Future<void> showCurrentViewfinder({
                             builder: (context, bytes, _) => bytes == null
                                 ? const Center(
                                     child: Text(
-                                      'Waiting for simulator preview',
+                                      'Waiting for OpenSC preview...',
                                       style: TextStyle(
                                         color: StudioColors.textSecondary,
                                         fontSize: 12,

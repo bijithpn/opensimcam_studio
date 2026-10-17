@@ -47,6 +47,7 @@ public final class SimulatorManager {
         
         let fallbackDirs = [
             Bundle.main.resourceURL,
+            URL(fileURLWithPath: "/Users/intersamrt/Documents/Flutter-Projects/opensc/build"),
             URL(fileURLWithPath: "/Users/intersamrt/Documents/Flutter-Projects/opensimcam/build"),
             FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/com.swmansion.SimCam")
         ].compactMap { $0 }
