@@ -112,10 +112,13 @@ final class StudioTrayController: NSObject, NSPopoverDelegate {
 
     func openStudioWindow() {
         NSApp.activate(ignoringOtherApps: true)
-        NSApp.windows
-            .compactMap { $0 as? MainFlutterWindow }
-            .first?
-            .makeKeyAndOrderFront(nil)
+        let window = MainFlutterWindow.shared
+            ?? NSApp.windows.compactMap { $0 as? MainFlutterWindow }.first
+        if window?.isMiniaturized == true {
+            window?.deminiaturize(nil)
+        } else {
+            window?.makeKeyAndOrderFront(nil)
+        }
     }
 
     func updatePreview(_ data: Data) {

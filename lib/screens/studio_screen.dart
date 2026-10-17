@@ -1,13 +1,14 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import '../models/camera_framing.dart';
 import '../models/camera_source_type.dart';
+import '../theme/studio_theme.dart';
 import '../widgets/floating_toolbar.dart';
 import '../widgets/main_settings_panel.dart';
-import '../widgets/quick_status_pill.dart';
 import '../widgets/simulator_camera_panel.dart';
 import '../widgets/viewfinder_dialog.dart';
 
@@ -576,6 +577,93 @@ class _OpenSCStudioHomeState extends State<OpenSCStudioHome> {
     }
   }
 
+  Future<void> _closeWindow() async {
+    try {
+      await _controlChannel.invokeMethod('closeWindow');
+    } catch (e) {
+      debugPrint('Failed to close window: $e');
+    }
+  }
+
+  Future<void> _startDraggingWindow() async {
+    try {
+      await _controlChannel.invokeMethod('dragWindow');
+    } catch (e) {
+      debugPrint('Failed to drag window: $e');
+    }
+  }
+
+  Widget _buildWindowHeaderBar() {
+    return Container(
+      height: 32,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xF216171D),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: StudioColors.border, width: 1),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x40000000),
+            blurRadius: 14,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          _TrafficLightButton(
+            color: const Color(0xFFFF5F56),
+            hoverColor: const Color(0xFFFF3B30),
+            icon: CupertinoIcons.xmark,
+            tooltip: 'Close window',
+            onTap: _closeWindow,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onPanStart: (_) => _startDraggingWindow(),
+              child: Center(
+                child: Container(
+                  width: 38,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.22),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onPanStart: (_) => _startDraggingWindow(),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  CupertinoIcons.move,
+                  size: 11,
+                  color: Colors.white.withValues(alpha: 0.38),
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  'DRAG',
+                  style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.6,
+                    color: Colors.white.withValues(alpha: 0.38),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final simulator = _bootedSimulators.isEmpty
@@ -588,51 +676,45 @@ class _OpenSCStudioHomeState extends State<OpenSCStudioHome> {
       backgroundColor: Colors.transparent,
       body: SafeArea(
         top: false,
-        child: Center(
-          child: ScrollConfiguration(
-            behavior: const ScrollBehavior().copyWith(scrollbars: false),
-            child: SingleChildScrollView(
-              physics: const BouncingScrollPhysics(),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 356),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    // Top Tool Tab Bar (matching image.png)
-                    FloatingToolbar(
-                      selectedIndex: _selectedToolbarTab,
-                      onTabSelected: (index) {
-                        setState(() => _selectedToolbarTab = index);
-                      },
-                    ),
-                    const SizedBox(height: 16),
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onPanStart: (_) => _startDraggingWindow(),
+          child: Center(
+            child: ScrollConfiguration(
+              behavior: const ScrollBehavior().copyWith(scrollbars: false),
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 14,
+                ),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 356),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      // Window Top Control & Drag Bar
+                      _buildWindowHeaderBar(),
+                      const SizedBox(height: 12),
 
-                    // Main Floating Settings Panel
-                    _buildMainSettingsPanel(),
-                    const SizedBox(height: 14),
+                      // Top Tool Tab Bar (matching image.png)
+                      FloatingToolbar(
+                        selectedIndex: _selectedToolbarTab,
+                        onTabSelected: (index) {
+                          setState(() => _selectedToolbarTab = index);
+                        },
+                      ),
+                      const SizedBox(height: 16),
 
-                    // Quick Status Pill (09:41 | Connected)
-                    QuickStatusPill(
-                      statusText: _connectedAppBundle != null
-                          ? 'Connected'
-                          : (_bootedSimulators.isNotEmpty
-                                ? 'Simulator Ready'
-                                : 'Connected'),
-                      isConnected:
-                          _connectedAppBundle != null ||
-                          _bootedSimulators.isNotEmpty,
-                      onTap: () {
-                        unawaited(_fetchCameras());
-                        unawaited(_fetchSimulators());
-                      },
-                    ),
-                    const SizedBox(height: 14),
+                      // Main Floating Settings Panel
+                      _buildMainSettingsPanel(),
+                      const SizedBox(height: 14),
 
-                    // Simulator Camera Panel (matching bottom card in image.png)
-                    _buildSimulatorCameraBottomCard(simulator, appBundle),
-                  ],
+                      // Simulator Camera Panel (matching bottom card in image.png)
+                      _buildSimulatorCameraBottomCard(simulator, appBundle),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -733,4 +815,77 @@ class _OpenSCStudioHomeState extends State<OpenSCStudioHome> {
     onStartSetup: _startSimulatorSetup,
     onOpenSimulator: _openSimulator,
   );
+}
+
+class _TrafficLightButton extends StatefulWidget {
+  const _TrafficLightButton({
+    required this.color,
+    required this.hoverColor,
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final Color color;
+  final Color hoverColor;
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  State<_TrafficLightButton> createState() => _TrafficLightButtonState();
+}
+
+class _TrafficLightButtonState extends State<_TrafficLightButton> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: widget.tooltip,
+      waitDuration: const Duration(milliseconds: 300),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _isHovered = true),
+        onExit: (_) => setState(() => _isHovered = false),
+        child: GestureDetector(
+          onTap: widget.onTap,
+          behavior: HitTestBehavior.opaque,
+          child: SizedBox(
+            width: 22,
+            height: 22,
+            child: Center(
+              child: Container(
+                width: 13,
+                height: 13,
+                decoration: BoxDecoration(
+                  color: _isHovered ? widget.hoverColor : widget.color,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: widget.color.withValues(
+                        alpha: _isHovered ? 0.6 : 0.3,
+                      ),
+                      blurRadius: _isHovered ? 4 : 2,
+                    ),
+                  ],
+                ),
+                child: Center(
+                  child: AnimatedOpacity(
+                    duration: const Duration(milliseconds: 120),
+                    opacity: _isHovered ? 1.0 : 0.0,
+                    child: Icon(
+                      widget.icon,
+                      size: 8,
+                      color: const Color(0xDD000000),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

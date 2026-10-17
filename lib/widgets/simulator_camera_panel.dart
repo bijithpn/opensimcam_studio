@@ -44,17 +44,22 @@ class SimulatorCameraPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final statusColor = isDiscovering
-        ? StudioColors.warning
-        : isConnected
-        ? StudioColors.success
-        : (_hasSimulator ? StudioColors.accent : StudioColors.danger);
+    final Color statusColor;
+    final String statusText;
 
-    final statusText = isDiscovering
-        ? 'Checking'
-        : isConnected
-        ? 'Connected'
-        : (_hasSimulator ? 'Simulator Ready' : 'No Simulator');
+    if (isDiscovering) {
+      statusColor = StudioColors.warning;
+      statusText = 'Checking';
+    } else if (isConnected) {
+      statusColor = StudioColors.success;
+      statusText = 'Connected';
+    } else if (_hasSimulator) {
+      statusColor = const Color(0xFF38BDF8); // Crisp Sky Blue
+      statusText = 'Simulator Ready';
+    } else {
+      statusColor = StudioColors.danger;
+      statusText = 'No Simulator';
+    }
 
     return GlassPanel(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
@@ -64,7 +69,7 @@ class SimulatorCameraPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Header with Title and Status Dot
+          // Header with Title and Styled Status Capsule
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -80,34 +85,49 @@ class SimulatorCameraPanel extends StatelessWidget {
                   ),
                 ),
               ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 7,
-                    height: 7,
-                    decoration: BoxDecoration(
-                      color: statusColor,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: statusColor.withValues(alpha: 0.4),
-                          blurRadius: 4,
-                          spreadRadius: 1,
-                        ),
-                      ],
-                    ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 3.5,
+                ),
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(5),
+                  border: Border.all(
+                    color: statusColor.withValues(alpha: 0.32),
+                    width: 0.8,
                   ),
-                  const SizedBox(width: 6),
-                  Text(
-                    statusText,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: StudioColors.textSecondary,
-                      fontWeight: FontWeight.w500,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: statusColor,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: statusColor.withValues(alpha: 0.6),
+                            blurRadius: 4,
+                            spreadRadius: 0.5,
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 5),
+                    Text(
+                      statusText,
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: statusColor,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.1,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -213,14 +233,29 @@ class SimulatorCameraPanel extends StatelessWidget {
         ),
         const SizedBox(width: 6),
         Expanded(
-          child: Text(
-            '$simulator · $appDescription',
+          child: Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: simulator,
+                  style: TextStyle(
+                    fontWeight: _hasSimulator
+                        ? FontWeight.w600
+                        : FontWeight.w400,
+                    color: _hasSimulator
+                        ? StudioColors.textPrimary
+                        : StudioColors.textMuted,
+                  ),
+                ),
+                TextSpan(
+                  text: ' · $appDescription',
+                  style: const TextStyle(color: StudioColors.textSecondary),
+                ),
+              ],
+            ),
             maxLines: 5,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 11,
-              color: StudioColors.textSecondary,
-            ),
+            style: const TextStyle(fontSize: 11),
           ),
         ),
       ],

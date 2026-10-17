@@ -413,6 +413,57 @@ public final class OpenSCBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
                     result(granted)
                 }
             }
+
+        case "closeWindow":
+            DispatchQueue.main.async {
+                let window = MainFlutterWindow.shared
+                    ?? (NSApp.windows.compactMap { $0 as? MainFlutterWindow }.first)
+                    ?? NSApp.keyWindow
+                    ?? NSApp.mainWindow
+                window?.orderOut(nil)
+            }
+            result(true)
+
+        case "minimizeWindow":
+            DispatchQueue.main.async {
+                let window = MainFlutterWindow.shared
+                    ?? (NSApp.windows.compactMap { $0 as? MainFlutterWindow }.first)
+                    ?? NSApp.keyWindow
+                    ?? NSApp.mainWindow
+
+                guard let window else { return }
+
+                if !window.styleMask.contains(.miniaturizable) {
+                    window.styleMask.insert(.miniaturizable)
+                }
+
+                if let minBtn = window.standardWindowButton(.miniaturizeButton) {
+                    minBtn.isEnabled = true
+                    minBtn.isHidden = false
+                    minBtn.alphaValue = 0.0
+                }
+
+                window.miniaturize(window)
+                if !window.isMiniaturized {
+                    window.performMiniaturize(window)
+                }
+                if !window.isMiniaturized {
+                    window.orderOut(nil)
+                }
+            }
+            result(true)
+
+        case "dragWindow":
+            DispatchQueue.main.async {
+                let window = MainFlutterWindow.shared
+                    ?? (NSApp.windows.compactMap { $0 as? MainFlutterWindow }.first)
+                    ?? NSApp.keyWindow
+                    ?? NSApp.mainWindow
+                if let window, let event = NSApp.currentEvent {
+                    window.performDrag(with: event)
+                }
+            }
+            result(true)
             
         default:
             result(FlutterMethodNotImplemented)

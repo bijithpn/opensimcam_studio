@@ -19,6 +19,9 @@ void main() {
     await tester.pumpAndSettle();
 
     // Verify key native desktop UI components
+    expect(find.byTooltip('Close window'), findsOneWidget);
+    expect(find.byTooltip('Minimize window'), findsOneWidget);
+    expect(find.text('DRAG'), findsOneWidget);
     expect(find.byType(FloatingToolbar), findsOneWidget);
     expect(find.byType(MainSettingsPanel), findsOneWidget);
     expect(find.byType(QuickStatusPill), findsOneWidget);

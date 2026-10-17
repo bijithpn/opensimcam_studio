@@ -149,9 +149,59 @@ class _MainSettingsPanelState extends State<MainSettingsPanel> {
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
       radius: StudioRadii.panel,
       tint: StudioColors.panel,
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 200),
-        child: _buildCurrentView(context),
+      child: AnimatedSize(
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.fastOutSlowIn,
+        alignment: Alignment.topCenter,
+        clipBehavior: Clip.hardEdge,
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 280),
+          reverseDuration: const Duration(milliseconds: 180),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          layoutBuilder: (currentChild, previousChildren) {
+            return Stack(
+              alignment: Alignment.topCenter,
+              clipBehavior: Clip.hardEdge,
+              children: <Widget>[
+                for (final prev in previousChildren)
+                  Positioned(top: 0, left: 0, right: 0, child: prev),
+                ?currentChild,
+              ],
+            );
+          },
+          transitionBuilder: (child, animation) {
+            final curvedAnimation = CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutCubic,
+              reverseCurve: Curves.easeInCubic,
+            );
+
+            return FadeTransition(
+              opacity: Tween<double>(begin: 0.0, end: 1.0).animate(
+                CurvedAnimation(
+                  parent: animation,
+                  curve: const Interval(0.15, 1.0, curve: Curves.easeOut),
+                  reverseCurve: const Interval(0.0, 0.7, curve: Curves.easeIn),
+                ),
+              ),
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0.0, 0.03),
+                  end: Offset.zero,
+                ).animate(curvedAnimation),
+                child: ScaleTransition(
+                  scale: Tween<double>(
+                    begin: 0.97,
+                    end: 1.0,
+                  ).animate(curvedAnimation),
+                  child: child,
+                ),
+              ),
+            );
+          },
+          child: _buildCurrentView(context),
+        ),
       ),
     );
   }
