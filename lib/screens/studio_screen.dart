@@ -589,47 +589,51 @@ class _OpenSCStudioHomeState extends State<OpenSCStudioHome> {
       body: SafeArea(
         top: false,
         child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 356),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  // Top Tool Tab Bar (matching image.png)
-                  FloatingToolbar(
-                    selectedIndex: _selectedToolbarTab,
-                    onTabSelected: (index) {
-                      setState(() => _selectedToolbarTab = index);
-                    },
-                  ),
-                  const SizedBox(height: 16),
+          child: ScrollConfiguration(
+            behavior: const ScrollBehavior().copyWith(scrollbars: false),
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 356),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // Top Tool Tab Bar (matching image.png)
+                    FloatingToolbar(
+                      selectedIndex: _selectedToolbarTab,
+                      onTabSelected: (index) {
+                        setState(() => _selectedToolbarTab = index);
+                      },
+                    ),
+                    const SizedBox(height: 16),
 
-                  // Main Floating Settings Panel
-                  _buildMainSettingsPanel(),
-                  const SizedBox(height: 14),
+                    // Main Floating Settings Panel
+                    _buildMainSettingsPanel(),
+                    const SizedBox(height: 14),
 
-                  // Quick Status Pill (09:41 | Connected)
-                  QuickStatusPill(
-                    statusText: _connectedAppBundle != null
-                        ? 'Connected'
-                        : (_bootedSimulators.isNotEmpty
-                              ? 'Simulator Ready'
-                              : 'Connected'),
-                    isConnected:
-                        _connectedAppBundle != null ||
-                        _bootedSimulators.isNotEmpty,
-                    onTap: () {
-                      unawaited(_fetchCameras());
-                      unawaited(_fetchSimulators());
-                    },
-                  ),
-                  const SizedBox(height: 14),
+                    // Quick Status Pill (09:41 | Connected)
+                    QuickStatusPill(
+                      statusText: _connectedAppBundle != null
+                          ? 'Connected'
+                          : (_bootedSimulators.isNotEmpty
+                                ? 'Simulator Ready'
+                                : 'Connected'),
+                      isConnected:
+                          _connectedAppBundle != null ||
+                          _bootedSimulators.isNotEmpty,
+                      onTap: () {
+                        unawaited(_fetchCameras());
+                        unawaited(_fetchSimulators());
+                      },
+                    ),
+                    const SizedBox(height: 14),
 
-                  // Simulator Camera Panel (matching bottom card in image.png)
-                  _buildSimulatorCameraBottomCard(simulator, appBundle),
-                ],
+                    // Simulator Camera Panel (matching bottom card in image.png)
+                    _buildSimulatorCameraBottomCard(simulator, appBundle),
+                  ],
+                ),
               ),
             ),
           ),

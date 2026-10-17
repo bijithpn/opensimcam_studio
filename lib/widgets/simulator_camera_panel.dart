@@ -215,7 +215,7 @@ class SimulatorCameraPanel extends StatelessWidget {
         Expanded(
           child: Text(
             '$simulator · $appDescription',
-            maxLines: 1,
+            maxLines: 5,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               fontSize: 11,
@@ -241,7 +241,7 @@ class SimulatorCameraPanel extends StatelessWidget {
       Expanded(
         child: Text(
           setupError ?? setupMessage ?? 'Camera setup is active.',
-          maxLines: 2,
+          maxLines: 5,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
             fontSize: 10.5,

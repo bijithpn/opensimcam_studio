@@ -38,9 +38,9 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     flutterViewController.view.layer?.isOpaque = false
     flutterViewController.backgroundColor = .clear
     
-    self.setContentSize(NSSize(width: 360, height: 760))
-    self.minSize = NSSize(width: 320, height: 580)
-    self.maxSize = NSSize(width: 420, height: 950)
+    self.setContentSize(NSSize(width: 365, height: 870))
+    self.minSize = NSSize(width: 320, height: 620)
+    self.maxSize = NSSize(width: 440, height: 1200)
     self.center()
 
     super.awakeFromNib()

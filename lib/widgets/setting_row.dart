@@ -20,7 +20,7 @@ class SettingRow extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Expanded(
+        Flexible(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -49,7 +49,7 @@ class SettingRow extends StatelessWidget {
             ],
           ),
         ),
-        const SizedBox(width: 14),
+        const SizedBox(width: 10),
         control,
       ],
     ),

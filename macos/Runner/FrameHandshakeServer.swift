@@ -93,6 +93,12 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
             return (channel.bundleID, channel.simUDID, cameraState.isActive, cameraState.camera)
         }
     }
+
+    public func hasActiveConnectedChannels() -> Bool {
+        channelsLock.lock()
+        defer { channelsLock.unlock() }
+        return activeChannels.contains { $0.isTransportConnected }
+    }
     
     private init() {}
     
@@ -227,6 +233,19 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
               let channelPath = json["channelPath"] as? String else {
             return
         }
+
+        let targetCanonical = canonicalPath(channelPath)
+        channelsLock.lock()
+        let existingWorking = activeChannels.first {
+            (canonicalPath($0.channelPath) == targetCanonical || $0.channelPath == channelPath) && $0.isTransportConnected
+        }
+        channelsLock.unlock()
+
+        if let existing = existingWorking {
+            existing.updateBundleID(bundleID)
+            publishConnected(bundleID: bundleID, simUDID: simUDID)
+            return
+        }
         
         let channel = ProcessChannel(simUDID: simUDID, bundleID: bundleID, channelPath: channelPath)
         channel.frontTransformConfig = frontTransformConfig
@@ -304,6 +323,10 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
         }
     }
 
+    private func canonicalPath(_ path: String) -> String {
+        return URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+    }
+
     /// Called on `serverQueue` when a handshake arrives or an active socket
     /// drops. Retry the app's advertised endpoint with bounded backoff; the
     /// app stays alive, so its camera plugin and Flutter dev session are not
@@ -311,8 +334,9 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
     private func beginReconnect(_ target: ReconnectTarget) {
         guard !isServerStopping else { return }
         channelsLock.lock()
+        let canonicalTarget = canonicalPath(target.channelPath)
         let alreadyConnected = activeChannels.contains {
-            $0.channelPath == target.channelPath || $0.bundleID == target.bundleID
+            (canonicalPath($0.channelPath) == canonicalTarget || $0.bundleID == target.bundleID) && $0.isTransportConnected
         }
         channelsLock.unlock()
         guard !alreadyConnected,
@@ -335,8 +359,9 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
                   !self.isServerStopping else { return }
 
             self.channelsLock.lock()
+            let canonicalTarget = self.canonicalPath(path)
             let replacementExists = self.activeChannels.contains {
-                $0.channelPath == path || $0.bundleID == target.bundleID
+                (self.canonicalPath($0.channelPath) == canonicalTarget || $0.bundleID == target.bundleID) && $0.isTransportConnected
             }
             self.channelsLock.unlock()
             guard !replacementExists else {
@@ -385,18 +410,21 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
 
     private func installConnectedChannel(_ channel: ProcessChannel) {
         channelsLock.lock()
+        let channelCanonical = canonicalPath(channel.channelPath)
         let staleChannels = activeChannels.filter {
-            $0.channelPath == channel.channelPath || $0.bundleID == channel.bundleID
+            $0 !== channel && (canonicalPath($0.channelPath) == channelCanonical || $0.bundleID == channel.bundleID)
         }
         for oldChannel in staleChannels {
             connectedChannelIDs.remove(ObjectIdentifier(oldChannel))
             oldChannel.disconnect()
         }
         activeChannels.removeAll {
-            $0.channelPath == channel.channelPath || $0.bundleID == channel.bundleID
+            $0 !== channel && (canonicalPath($0.channelPath) == channelCanonical || $0.bundleID == channel.bundleID)
         }
-        activeChannels.append(channel)
-        connectedChannelIDs.insert(ObjectIdentifier(channel))
+        if !activeChannels.contains(where: { $0 === channel }) {
+            activeChannels.append(channel)
+            connectedChannelIDs.insert(ObjectIdentifier(channel))
+        }
         channelsLock.unlock()
         cancelReconnects(bundleID: channel.bundleID)
     }
@@ -444,10 +472,15 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
     }
 
     public func tryConnectDiscoveredSocket(at fullPath: String) {
+        let canonicalFullPath = canonicalPath(fullPath)
         channelsLock.lock()
-        let alreadyConnected = activeChannels.contains { $0.channelPath == fullPath }
+        let alreadyConnected = activeChannels.contains {
+            (canonicalPath($0.channelPath) == canonicalFullPath || $0.channelPath == fullPath) && $0.isTransportConnected
+        }
         channelsLock.unlock()
-        if alreadyConnected || reconnectingChannelPaths.contains(fullPath) { return }
+        if alreadyConnected || reconnectingChannelPaths.contains(canonicalFullPath) || reconnectingChannelPaths.contains(fullPath) {
+            return
+        }
 
         guard FileManager.default.fileExists(atPath: fullPath) else { return }
 

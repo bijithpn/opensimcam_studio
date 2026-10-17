@@ -23,7 +23,7 @@ class StudioDropdown<T> extends StatelessWidget {
     required this.items,
     required this.onChanged,
     this.height = 28.0,
-    this.isExpanded = false,
+    this.isExpanded = true,
     this.fontSize = 11.5,
     this.leadingIcon,
     this.backgroundColor,
@@ -75,7 +75,6 @@ class StudioDropdown<T> extends StatelessWidget {
                 return DropdownMenuItem<T>(
                   value: item.value,
                   child: Row(
-                    mainAxisSize: MainAxisSize.min,
                     children: [
                       if (item.icon != null) ...[
                         Icon(
@@ -85,7 +84,7 @@ class StudioDropdown<T> extends StatelessWidget {
                         ),
                         const SizedBox(width: 6),
                       ],
-                      Flexible(
+                      Expanded(
                         child: Text(
                           item.label,
                           overflow: TextOverflow.ellipsis,

@@ -350,11 +350,16 @@ public final class ProcessChannel {
         let succeeded = packet.withUnsafeBytes { rawPtr -> Bool in
             guard let baseAddress = rawPtr.baseAddress else { return false }
             var offset = 0
+            var retryCount = 0
             while offset < packet.count {
                 let written = write(descriptor, baseAddress.advanced(by: offset), packet.count - offset)
                 if written > 0 {
                     offset += written
-                } else if written < 0 && errno == EINTR {
+                    retryCount = 0
+                } else if written < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+                    retryCount += 1
+                    if retryCount > 50 { return false }
+                    usleep(500)
                     continue
                 } else {
                     return false

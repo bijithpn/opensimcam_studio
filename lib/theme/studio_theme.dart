@@ -55,6 +55,11 @@ abstract final class StudioTheme {
       thumbShape: RoundSliderThumbShape(enabledThumbRadius: 5),
       overlayShape: RoundSliderOverlayShape(overlayRadius: 10),
     ),
+    scrollbarTheme: const ScrollbarThemeData(
+      thumbVisibility: WidgetStatePropertyAll(false),
+      trackVisibility: WidgetStatePropertyAll(false),
+      interactive: false,
+    ),
   );
 }
 

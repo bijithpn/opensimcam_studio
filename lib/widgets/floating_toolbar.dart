@@ -29,11 +29,11 @@ class _FloatingToolbarState extends State<FloatingToolbar> {
   ];
 
   static const List<String> _tooltips = [
-    'Camera Overview (All Tools)',
-    'Aspect & Framing',
+    'Camera Configuration',
+    'Aspect Ratio & Framing',
     'Simulator Controls',
     'Fine Adjustments',
-    'Media Sources & Options',
+    'Media Sources & Output',
   ];
 
   @override

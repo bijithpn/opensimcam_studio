@@ -687,8 +687,6 @@ public final class VideoSource: MediaSource {
            let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
             delegate?.mediaSourceDidOutputFrame(self, pixelBuffer: pixelBuffer, image: nil, ciImage: nil)
         } else if reader.status == .completed {
-            assetReader = nil
-            trackOutput = nil
             restartReader()
         }
     }

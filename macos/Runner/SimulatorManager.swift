@@ -280,43 +280,32 @@ public final class SimulatorManager {
             injectedSimUDIDs = injectedSimUDIDs.intersection(currentUDIDs)
             runningAppsLock.lock()
             runningAppsLastChecked = runningAppsLastChecked.filter { currentUDIDs.contains($0.key) }
-            runningAppsCache = runningAppsCache.filter { currentUDIDs.contains($0.key) }
             runningAppsLock.unlock()
 
-            // Proactively connect to any active camera sockets immediately
-            FrameHandshakeServer.shared.scanExistingProcessSockets()
-
-            // Publish booted devices before querying app processes or copying
-            // the camera loader, so simulator discovery stays responsive.
-            DispatchQueue.main.async { onUpdate?(devices) }
-
-            let sims = devices.map { device in
-                BootedSimulator(
-                    name: device.name,
-                    udid: device.udid,
-                    isInjected: device.isInjected,
-                    runningAppBundle: getCachedRunningApp(simUDID: device.udid)
-                )
+            // If not actively connected to a client app, proactively scan for newly started app sockets
+            if !FrameHandshakeServer.shared.hasActiveConnectedChannels() {
+                FrameHandshakeServer.shared.scanExistingProcessSockets()
             }
-            DispatchQueue.main.async { onUpdate?(sims) }
 
-            guard let loader = getLoaderPath() else { return }
-            for sim in sims {
-                if !injectedSimUDIDs.contains(sim.udid) {
-                    injectDylib(loaderPath: loader, intoUDID: sim.udid)
+            let loader = getLoaderPath()
+            for device in devices {
+                if let loader = loader, !injectedSimUDIDs.contains(device.udid) {
+                    injectDylib(loaderPath: loader, intoUDID: device.udid)
                 }
             }
 
-            let updatedSims = sims.map { sim in
+            let completeSims = devices.map { device in
                 BootedSimulator(
-                    name: sim.name,
-                    udid: sim.udid,
-                    isInjected: injectedSimUDIDs.contains(sim.udid),
-                    runningAppBundle: sim.runningAppBundle
+                    name: device.name,
+                    udid: device.udid,
+                    isInjected: injectedSimUDIDs.contains(device.udid) || device.isInjected,
+                    runningAppBundle: getCachedRunningApp(simUDID: device.udid)
                 )
             }
+
+            // Publish a single consolidated, complete update to avoid connection bouncing
             DispatchQueue.main.async {
-                onUpdate?(updatedSims)
+                onUpdate?(completeSims)
             }
         }
         timer.resume()
