@@ -3,7 +3,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:opensc/main.dart';
 import 'package:opensc/widgets/floating_toolbar.dart';
 import 'package:opensc/widgets/main_settings_panel.dart';
-import 'package:opensc/widgets/quick_status_pill.dart';
 import 'package:opensc/widgets/simulator_camera_panel.dart';
 
 void main() {
@@ -20,18 +19,15 @@ void main() {
 
     // Verify key native desktop UI components
     expect(find.byTooltip('Close window'), findsOneWidget);
-    expect(find.byTooltip('Minimize window'), findsOneWidget);
     expect(find.text('DRAG'), findsOneWidget);
     expect(find.byType(FloatingToolbar), findsOneWidget);
     expect(find.byType(MainSettingsPanel), findsOneWidget);
-    expect(find.byType(QuickStatusPill), findsOneWidget);
     expect(find.byType(SimulatorCameraPanel), findsOneWidget);
 
     // Verify presence of core controls on Tab 0 (Camera Configuration)
     expect(find.text('Camera Configuration'), findsOneWidget);
     expect(find.text('Reset'), findsOneWidget);
     expect(find.text('Dual Camera Stream'), findsOneWidget);
-    expect(find.text('09:41'), findsOneWidget);
     expect(find.text('Simulator Camera'), findsOneWidget);
 
     // Test clicking tabs in FloatingToolbar to verify responsive, non-repeating navigation

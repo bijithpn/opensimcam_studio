@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/icons/app_icon.png" width="128" height="128" alt="OpenSC App Icon" />
+</p>
+
 # OpenSC (Open Source Simulator Cam)
 
 OpenSC is a macOS camera utility for iOS Simulator development. It provides camera sources, framing controls, a live viewfinder, and a menu bar tray so developers can test camera features in a running simulator app without restarting the simulator or interrupting the Flutter development session.
@@ -78,7 +82,7 @@ lib/
   models/                           Camera source and framing models
   theme/                            Shared colors and glass material settings
   widgets/                          Glass panels, source controls, preview, and viewfinder
-assets/                             Bundled demo videos and other app assets
+assets/                             App icon, menu tray icon, bundled demo videos, and other assets
 macos/Runner/
   OpenSCBridge.swift                Flutter/native method and preview channels
   StudioTray.swift                  Menu bar item and tray popover

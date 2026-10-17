@@ -20,6 +20,7 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     self.titleVisibility = .hidden
     self.styleMask.insert(.fullSizeContentView)
     self.styleMask.insert(.miniaturizable)
+    self.collectionBehavior.insert([.canJoinAllSpaces, .fullScreenAuxiliary])
     self.delegate = self
     self.isMovableByWindowBackground = true
     self.isOpaque = false

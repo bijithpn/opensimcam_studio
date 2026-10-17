@@ -67,6 +67,15 @@ public final class OpenSCBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
                         "onTraySourceChanged",
                         arguments: ["source": source]
                     )
+                },
+                onToggleMirror: { [weak instance] in
+                    instance?.invokeFlutterFromTray("onTrayToggleMirror")
+                },
+                onSwitchCamera: { [weak instance] camera in
+                    instance?.invokeFlutterFromTray(
+                        "onTraySwitchCamera",
+                        arguments: ["camera": camera]
+                    )
                 }
             )
         }
@@ -292,6 +301,9 @@ public final class OpenSCBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
             let args = call.arguments as? [String: Any]
             let camera = args?["camera"] as? String ?? "back"
             server.previewTargetCamera = camera
+            Task { @MainActor in
+                StudioTrayController.shared.setActiveCamera(camera)
+            }
             result(true)
             
         case "updateTransformSettings":
@@ -316,6 +328,19 @@ public final class OpenSCBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
                 mirror: mirror
             )
             server.updateTransformConfig(target: target, config: config)
+            Task { @MainActor in
+                StudioTrayController.shared.setMirrored(mirror)
+            }
+            result(true)
+
+        case "updateTrayCameraState":
+            let args = call.arguments as? [String: Any]
+            let camera = args?["camera"] as? String
+            let mirror = args?["mirror"] as? Bool
+            Task { @MainActor in
+                if let camera { StudioTrayController.shared.setActiveCamera(camera) }
+                if let mirror { StudioTrayController.shared.setMirrored(mirror) }
+            }
             result(true)
             
         case "getCameras":

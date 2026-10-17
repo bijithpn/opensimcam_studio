@@ -115,6 +115,26 @@ class _OpenSCStudioHomeState extends State<OpenSCStudioHome> {
             unawaited(_activateSource(source));
           }
           break;
+        case 'onTrayToggleMirror':
+          final newMirror = !_activeFraming.mirror;
+          setState(() {
+            _activeFraming.mirror = newMirror;
+            if (_targetCamera == 'both') {
+              _frontFraming.mirror = newMirror;
+              _backFraming.mirror = newMirror;
+            }
+          });
+          unawaited(_updateTransformSettings());
+          break;
+        case 'onTraySwitchCamera':
+          final target = (call.arguments as Map?)?['camera']?.toString();
+          if (target != null && (target == 'front' || target == 'back')) {
+            _selectTargetCamera(target);
+          } else {
+            final next = _previewTarget == 'front' ? 'back' : 'front';
+            _selectTargetCamera(next);
+          }
+          break;
         case 'onSimulatorsUpdated':
           if (call.arguments is List) {
             final list = (call.arguments as List)
