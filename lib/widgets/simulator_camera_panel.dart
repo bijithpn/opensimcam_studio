@@ -4,9 +4,8 @@ import 'package:flutter/material.dart';
 import '../models/camera_source_type.dart';
 import '../theme/studio_theme.dart';
 import 'glass_panel.dart';
+import 'studio_dropdown.dart';
 
-/// Compact presentation for simulator discovery, camera source selection,
-/// connection state, and the native setup action.
 class SimulatorCameraPanel extends StatelessWidget {
   const SimulatorCameraPanel({
     required this.source,
@@ -46,197 +45,182 @@ class SimulatorCameraPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final statusColor = isDiscovering
-        ? StudioColors.textSecondary
+        ? StudioColors.warning
         : isConnected
         ? StudioColors.success
-        : (_hasSimulator ? StudioColors.textSecondary : StudioColors.danger);
+        : (_hasSimulator ? StudioColors.accent : StudioColors.danger);
+
     final statusText = isDiscovering
         ? 'Checking'
         : isConnected
         ? 'Connected'
-        : (_hasSimulator ? 'Simulator ready' : 'No simulator');
+        : (_hasSimulator ? 'Simulator Ready' : 'No Simulator');
 
     return GlassPanel(
-      padding: const EdgeInsets.all(18),
-      radius: 20,
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+      radius: StudioRadii.panel,
+      tint: StudioColors.panel,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
+          // Header with Title and Status Dot
           Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Expanded(
                 child: Text(
                   'Simulator Camera',
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 14,
-                    height: 1.2,
-                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
                     color: StudioColors.textPrimary,
+                    letterSpacing: -0.1,
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
-              Semantics(
-                label: 'Simulator status: $statusText',
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 7,
-                      height: 7,
-                      decoration: BoxDecoration(
-                        color: statusColor,
-                        shape: BoxShape.circle,
-                      ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: statusColor,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: statusColor.withValues(alpha: 0.4),
+                          blurRadius: 4,
+                          spreadRadius: 1,
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 6),
-                    Text(
-                      statusText,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: StudioColors.textSecondary,
-                      ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    statusText,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: StudioColors.textSecondary,
+                      fontWeight: FontWeight.w500,
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ],
           ),
-          const SizedBox(height: 14),
-          _sourceSelector(),
           const SizedBox(height: 12),
+
+          // Native macOS Dropdown for Camera Source with custom icons
+          StudioDropdown<CameraSourceType>(
+            value: source,
+            height: 36,
+            isExpanded: true,
+            fontSize: 12,
+            items: CameraSourceType.values.map((item) {
+              return StudioDropdownItem<CameraSourceType>(
+                value: item,
+                label: item.title,
+                icon: item.icon,
+                iconColor: StudioColors.accent,
+              );
+            }).toList(),
+            onChanged: (val) {
+              if (val != null) onSourceChanged(val);
+            },
+          ),
+          const SizedBox(height: 12),
+
+          // Contextual status info
           _simulatorDetails(),
-          if (setupError != null || setupMessage != null || setupComplete) ...[
-            const SizedBox(height: 10),
+
+          if (setupError != null ||
+              setupMessage != null ||
+              (!isConnected && _hasSimulator)) ...[
+            const SizedBox(height: 8),
             _setupFeedback(),
           ],
-          const SizedBox(height: 14),
-          SizedBox(
-            height: 34,
-            child: ElevatedButton(
-              onPressed: isDiscovering || isSettingUp
-                  ? null
-                  : _hasSimulator
-                  ? onStartSetup
-                  : onOpenSimulator,
-              style:
-                  ElevatedButton.styleFrom(
-                    elevation: 0,
-                    backgroundColor: StudioColors.accent,
-                    foregroundColor: Colors.white,
-                    disabledBackgroundColor: Colors.white.withValues(
-                      alpha: .07,
-                    ),
-                    disabledForegroundColor: StudioColors.textSecondary,
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    textStyle: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ).copyWith(
-                    overlayColor: WidgetStateProperty.resolveWith((states) {
-                      if (states.contains(WidgetState.pressed)) {
-                        return Colors.white.withValues(alpha: .12);
-                      }
-                      if (states.contains(WidgetState.hovered)) {
-                        return Colors.white.withValues(alpha: .07);
-                      }
-                      return null;
-                    }),
-                    side: WidgetStateProperty.resolveWith(
-                      (states) => states.contains(WidgetState.focused)
-                          ? const BorderSide(
-                              color: Color(0xFF8FC5FF),
-                              width: 1.5,
-                            )
-                          : BorderSide.none,
-                    ),
+
+          if (!isConnected || isSettingUp || !_hasSimulator) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 32,
+              child: ElevatedButton(
+                onPressed: isDiscovering || isSettingUp
+                    ? null
+                    : _hasSimulator
+                    ? onStartSetup
+                    : onOpenSimulator,
+                style: ElevatedButton.styleFrom(
+                  elevation: 0,
+                  backgroundColor: StudioColors.accent,
+                  foregroundColor: Colors.white,
+                  disabledBackgroundColor: Colors.white.withValues(alpha: .06),
+                  disabledForegroundColor: StudioColors.textMuted,
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(StudioRadii.control),
                   ),
-              child: isSettingUp
-                  ? const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 1.8,
-                        color: Colors.white,
-                      ),
-                    )
-                  : Text(_hasSimulator ? 'Start Setup' : 'Open Simulator'),
+                  textStyle: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.1,
+                  ),
+                ),
+                child: isSettingUp
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : Text(_hasSimulator ? 'Start Setup' : 'Open Simulator'),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _sourceSelector() => Container(
-    height: 38,
-    padding: const EdgeInsets.symmetric(horizontal: 10),
-    decoration: BoxDecoration(
-      color: Colors.white.withValues(alpha: .055),
-      borderRadius: BorderRadius.circular(9),
-      border: Border.all(color: Colors.white.withValues(alpha: .11)),
-    ),
-    child: DropdownButtonHideUnderline(
-      child: DropdownButton<CameraSourceType>(
-        value: source,
-        isExpanded: true,
-        borderRadius: BorderRadius.circular(9),
-        dropdownColor: const Color(0xFF292A2D),
-        icon: const Icon(CupertinoIcons.chevron_down, size: 13),
-        style: const TextStyle(fontSize: 12, color: StudioColors.textPrimary),
-        items: CameraSourceType.values
-            .map(
-              (item) => DropdownMenuItem(
-                value: item,
-                child: Text(item.title, overflow: TextOverflow.ellipsis),
-              ),
-            )
-            .toList(growable: false),
-        onChanged: (value) {
-          if (value != null) onSourceChanged(value);
-        },
-      ),
-    ),
-  );
-
   Widget _simulatorDetails() {
     final simulator = isDiscovering
         ? 'Checking for simulators…'
         : (simulatorName ?? 'No booted simulator detected');
+
     final appDescription = appBundle == null
         ? (isDiscovering
-              ? 'Detecting booted devices'
+              ? 'Detecting active device'
               : (_hasSimulator
                     ? 'Waiting for an app connection'
-                    : 'Open a simulator to begin'))
+                    : 'Open iOS Simulator to begin'))
         : '${appBundle!.split('.').last} · ${isCameraActive
-              ? 'Camera active ($activeCamera)'
+              ? 'Active ($activeCamera)'
               : isConnected
-              ? 'Camera plugin connected'
-              : 'App detected; waiting for camera plugin'}';
+              ? 'Connected'
+              : 'Waiting for camera'}';
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Row(
       children: [
-        Text(
-          simulator,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 12, color: StudioColors.textPrimary),
+        const Icon(
+          CupertinoIcons.device_phone_portrait,
+          size: 12,
+          color: StudioColors.textMuted,
         ),
-        const SizedBox(height: 3),
-        Text(
-          appDescription,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            fontSize: 11,
-            color: StudioColors.textSecondary,
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            '$simulator · $appDescription',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 11,
+              color: StudioColors.textSecondary,
+            ),
           ),
         ),
       ],
@@ -248,18 +232,20 @@ class SimulatorCameraPanel extends StatelessWidget {
     children: [
       Icon(
         setupError == null
-            ? CupertinoIcons.checkmark_circle_fill
+            ? CupertinoIcons.checkmark_alt_circle_fill
             : CupertinoIcons.exclamationmark_circle_fill,
         size: 13,
         color: setupError == null ? StudioColors.success : StudioColors.danger,
       ),
-      const SizedBox(width: 7),
+      const SizedBox(width: 6),
       Expanded(
         child: Text(
-          setupError ?? setupMessage ?? 'Setup is active for this simulator.',
+          setupError ?? setupMessage ?? 'Camera setup is active.',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            fontSize: 11,
-            height: 1.3,
+            fontSize: 10.5,
+            height: 1.25,
             color: setupError == null
                 ? StudioColors.textSecondary
                 : StudioColors.danger,

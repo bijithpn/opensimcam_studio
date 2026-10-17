@@ -1,16 +1,13 @@
 import 'dart:async';
 import 'dart:io';
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
 import '../models/camera_framing.dart';
 import '../models/camera_source_type.dart';
-import '../theme/studio_theme.dart';
-import '../widgets/glass_panel.dart';
-import '../widgets/setting_row.dart';
-import '../widgets/live_preview_panel.dart';
+import '../widgets/floating_toolbar.dart';
+import '../widgets/main_settings_panel.dart';
+import '../widgets/quick_status_pill.dart';
 import '../widgets/simulator_camera_panel.dart';
 import '../widgets/viewfinder_dialog.dart';
 
@@ -38,6 +35,7 @@ class _OpenSCStudioHomeState extends State<OpenSCStudioHome> {
   String _previewTarget = 'back'; // 'back', 'front'
   bool _isSimCameraActive = false;
   String _simActiveCamera = 'back';
+  int _selectedToolbarTab = 0;
 
   CameraFraming get _activeFraming {
     if (_targetCamera == 'front') return _frontFraming;
@@ -75,8 +73,6 @@ class _OpenSCStudioHomeState extends State<OpenSCStudioHome> {
     super.initState();
     _initMethodChannelHandler();
     _initPreviewStream();
-    // Let Flutter paint the workspace before camera enumeration, simulator
-    // discovery, or media-source initialization can do any work.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_fetchCameras());
@@ -221,9 +217,6 @@ class _OpenSCStudioHomeState extends State<OpenSCStudioHome> {
         setState(() {
           _isDiscoveringSimulators = false;
           _bootedSimulators = simulators;
-          // Only clear a connection when every simulator has stopped. The
-          // running-app query can briefly return null while launch services
-          // are updating; the native socket disconnect event is authoritative.
           if (_bootedSimulators.isEmpty) {
             if (_connectedAppBundle != null) {
               _connectedAppBundle = null;
@@ -334,8 +327,6 @@ class _OpenSCStudioHomeState extends State<OpenSCStudioHome> {
                   'requestScreenCapturePermission',
                 ) ??
                 false;
-            // Permission requests may return before the system preference
-            // state has propagated, so confirm once before starting capture.
             final granted =
                 requested ||
                 (await _controlChannel.invokeMethod<bool>(
@@ -587,817 +578,155 @@ class _OpenSCStudioHomeState extends State<OpenSCStudioHome> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: StudioColors.canvas,
-      body: LiquidGlassLayer(
-        settings: StudioGlass.settings,
-        // The package's shader renderer can produce a black surface on some
-        // macOS/Metal configurations. FakeGlass retains package blur/material
-        // styling while leaving child content on Flutter's normal render path.
-        fake: true,
-        child: ScrollConfiguration(
-          behavior: ScrollBehavior().copyWith(scrollbars: false),
-          child: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(24, 28, 24, 22),
-              child: Column(
-                children: [
-                  _buildAppHeader(),
-                  const SizedBox(height: 18),
-                  Expanded(
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final wide = constraints.maxWidth >= 900;
-                        if (!wide) {
-                          return SingleChildScrollView(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                _buildSimulatorCameraBottomCard(),
-                                const SizedBox(height: 14),
-                                LayoutBuilder(
-                                  builder: (context, previewConstraints) {
-                                    final frameWidth =
-                                        (previewConstraints.maxWidth - 28)
-                                            .clamp(160.0, double.infinity)
-                                            .toDouble();
-                                    // Camera frames are portrait 9:16. Give
-                                    // the preview the same shape so it neither
-                                    // crops the feed nor adds side bars.
-                                    return SizedBox(
-                                      height: frameWidth * 16 / 9 + 132,
-                                      child: _buildWorkspacePreview(),
-                                    );
-                                  },
-                                ),
-                                const SizedBox(height: 16),
-                                _buildSettingsContents(),
-                              ],
-                            ),
-                          );
-                        }
-                        return Row(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Expanded(flex: 7, child: _buildWorkspacePreview()),
-                            const SizedBox(width: 18),
-                            SizedBox(width: 370, child: _buildInspector()),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAppHeader() {
-    return Row(
-      children: [
-        Container(
-          width: 34,
-          height: 34,
-          decoration: BoxDecoration(
-            color: const Color(0xFF2495FF).withValues(alpha: .22),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: const Icon(
-            CupertinoIcons.camera_fill,
-            size: 17,
-            color: Color(0xFF72C2FF),
-          ),
-        ),
-        const SizedBox(width: 11),
-        const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'OpenSC',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-            ),
-            SizedBox(height: 2),
-            Text(
-              'Open Source Simulator Cam',
-              style: TextStyle(fontSize: 11, color: Color(0xFFA7ADBE)),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildInspector() {
-    return SingleChildScrollView(child: _buildInspectorContents());
-  }
-
-  Widget _buildInspectorContents() => Column(
-    children: [
-      _buildSettingsContents(),
-      const SizedBox(height: 12),
-      _buildSimulatorCameraBottomCard(),
-    ],
-  );
-
-  Widget _buildSettingsContents() => Column(
-    children: [
-      _buildCameraSettingsCard(),
-      const SizedBox(height: 12),
-      _buildAdjustViewCard(),
-      if (_currentSource == CameraSourceType.image ||
-          _currentSource == CameraSourceType.video ||
-          _currentSource == CameraSourceType.demoVideo ||
-          _currentSource == CameraSourceType.qrCode ||
-          _currentSource == CameraSourceType.passthrough) ...[
-        const SizedBox(height: 12),
-        _buildContextualCard(),
-      ],
-    ],
-  );
-
-  Widget _buildWorkspacePreview() => LivePreviewPanel(
-    frame: _previewFrameNotifier,
-    source: _currentSource,
-    isLive: _isSimCameraActive,
-    previewCamera: _previewTarget,
-    targetCamera: _targetCamera,
-    zoom: _previewTarget == 'front' ? _frontFraming.zoom : _backFraming.zoom,
-    onSwitchCamera: () =>
-        _setPreviewCamera(_previewTarget == 'back' ? 'front' : 'back'),
-    onOpenViewfinder: () => showCurrentViewfinder(
-      context: context,
-      frame: _previewFrameNotifier,
-      camera: _previewTarget,
-      zoom: _previewTarget == 'front' ? _frontFraming.zoom : _backFraming.zoom,
-    ),
-  );
-
-  // --- WIDGET BUILDERS ---
-
-  Widget _buildCameraSettingsCard() {
-    return GlassPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Camera Configuration',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: StudioColors.textPrimary,
-            ),
-          ),
-          const SizedBox(height: 10),
-
-          // If Webcam selected, allow picking Mac Camera
-          if (_currentSource == CameraSourceType.webcam &&
-              _availableCameras.isNotEmpty) ...[
-            _buildSettingRow(
-              label: 'Mac Camera',
-              control: DropdownButtonHideUnderline(
-                child: DropdownButton<String>(
-                  value: _selectedCameraId,
-                  dropdownColor: const Color(0xFF1E2235),
-                  borderRadius: BorderRadius.circular(10),
-                  isDense: true,
-                  style: const TextStyle(fontSize: 12, color: Colors.white),
-                  items: _availableCameras.map((c) {
-                    return DropdownMenuItem<String>(
-                      value: c['id'],
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 150),
-                        child: Text(
-                          c['name'] ?? 'Camera',
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                  onChanged: (val) {
-                    if (val != null) {
-                      setState(() => _selectedCameraId = val);
-                      _activateSource(CameraSourceType.webcam);
-                    }
-                  },
-                ),
-              ),
-            ),
-            const Divider(color: Color(0xFF222639), height: 16),
-          ],
-
-          // Setting Row: Ratio (Letterbox Fit, Fill, Stretch, Rotate 90)
-          _buildSettingRow(
-            label: 'Aspect Ratio',
-            control: DropdownButtonHideUnderline(
-              child: DropdownButton<String>(
-                value: _activeFraming.fitMode,
-                dropdownColor: const Color(0xFF1E2235),
-                borderRadius: BorderRadius.circular(10),
-                isDense: true,
-                style: const TextStyle(fontSize: 12, color: Colors.white),
-                items: const [
-                  DropdownMenuItem(
-                    value: 'fit',
-                    child: Text('Fit (Letterbox)'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'fill',
-                    child: Text('Fill (Cover 9:16)'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'stretch',
-                    child: Text('Stretch (Full)'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'rotate90',
-                    child: Text('Rotate 90° CW'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'rotate180',
-                    child: Text('Rotate 180°'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'rotate270',
-                    child: Text('Rotate 270° CW'),
-                  ),
-                ],
-                onChanged: (val) {
-                  if (val != null) _setFitMode(val);
-                },
-              ),
-            ),
-          ),
-
-          const Divider(color: Color(0xFF222639), height: 16),
-
-          // Setting Row: Dual Camera Stream (Front & Back)
-          _buildSettingRow(
-            label: 'Front & Back Cameras',
-            control: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(
-                  CupertinoIcons.checkmark_alt_circle_fill,
-                  size: 14,
-                  color: Color(0xFF10B981),
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  _isSimCameraActive
-                      ? 'Streaming: ${_simActiveCamera.toUpperCase()}'
-                      : 'Dual Ready',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF10B981),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAdjustViewCard() {
-    return GlassPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: const [
-                  Icon(
-                    CupertinoIcons.slider_horizontal_3,
-                    size: 14,
-                    color: Color(0xFF60A5FA),
-                  ),
-                  SizedBox(width: 6),
-                  Text(
-                    'Framing & Adjustments',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
-                    ),
-                  ),
-                ],
-              ),
-              CupertinoButton(
-                padding: EdgeInsets.zero,
-                onPressed: _resetTransform,
-                minimumSize: Size(0, 0),
-                child: const Text(
-                  'Reset',
-                  style: TextStyle(fontSize: 11, color: Color(0xFF60A5FA)),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-
-          // Camera Target Selector: Both, Front, Back
-          Container(
-            height: 32,
-            padding: const EdgeInsets.all(2),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1E2235),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFF2B324B)),
-            ),
-            child: Row(
-              children: [
-                _buildTargetSegment(
-                  'both',
-                  'Both (Synced)',
-                  CupertinoIcons.arrow_2_circlepath,
-                ),
-                _buildTargetSegment(
-                  'front',
-                  'Front Cam',
-                  CupertinoIcons.person_crop_circle,
-                ),
-                _buildTargetSegment('back', 'Back Cam', CupertinoIcons.camera),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-
-          // Zoom control
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Zoom Level',
-                style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF222639),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  '${_activeFraming.zoom.toStringAsFixed(2)}x',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF60A5FA),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              trackHeight: 3,
-              activeTrackColor: const Color(0xFF3B82F6),
-              inactiveTrackColor: const Color(0xFF252A3D),
-              thumbColor: Colors.white,
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-            ),
-            child: Slider(
-              value: _activeFraming.zoom,
-              min: 0.5,
-              max: 3.0,
-              onChanged: (val) {
-                setState(() => _activeFraming.zoom = val);
-                _updateTransformSettings();
-              },
-            ),
-          ),
-
-          // Zoom quick presets
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [0.75, 1.0, 1.25, 1.5, 2.0].map((preset) {
-              final isSelected = (_activeFraming.zoom - preset).abs() < 0.05;
-              return GestureDetector(
-                onTap: () {
-                  setState(() => _activeFraming.zoom = preset);
-                  _updateTransformSettings();
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: isSelected
-                        ? const Color(0xFF3B82F6)
-                        : const Color(0xFF1E2235),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    '${preset}x',
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                      color: isSelected
-                          ? Colors.white
-                          : const Color(0xFF94A3B8),
-                    ),
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
-
-          const Divider(color: Color(0xFF222639), height: 16),
-
-          // Horizontal Pan
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Pan Horizontal (X)',
-                style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-              ),
-              Text(
-                '${(_activeFraming.offsetX * 100).toInt()}%',
-                style: const TextStyle(fontSize: 11, color: Colors.white70),
-              ),
-            ],
-          ),
-          SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              trackHeight: 3,
-              activeTrackColor: const Color(0xFF3B82F6),
-              inactiveTrackColor: const Color(0xFF252A3D),
-              thumbColor: Colors.white,
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-            ),
-            child: Slider(
-              value: _activeFraming.offsetX,
-              min: -1.0,
-              max: 1.0,
-              onChanged: (val) {
-                setState(() => _activeFraming.offsetX = val);
-                _updateTransformSettings();
-              },
-            ),
-          ),
-
-          // Vertical Pan
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Pan Vertical (Y)',
-                style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-              ),
-              Text(
-                '${(_activeFraming.offsetY * 100).toInt()}%',
-                style: const TextStyle(fontSize: 11, color: Colors.white70),
-              ),
-            ],
-          ),
-          SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              trackHeight: 3,
-              activeTrackColor: const Color(0xFF3B82F6),
-              inactiveTrackColor: const Color(0xFF252A3D),
-              thumbColor: Colors.white,
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-            ),
-            child: Slider(
-              value: _activeFraming.offsetY,
-              min: -1.0,
-              max: 1.0,
-              onChanged: (val) {
-                setState(() => _activeFraming.offsetY = val);
-                _updateTransformSettings();
-              },
-            ),
-          ),
-
-          const Divider(color: Color(0xFF222639), height: 16),
-
-          // Rotation & Mirror
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Rotation',
-                style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-              ),
-              Row(
-                children: [0, 90, 180, 270].map((deg) {
-                  final isSelected = _activeFraming.rotation == deg;
-                  return GestureDetector(
-                    onTap: () {
-                      setState(() => _activeFraming.rotation = deg);
-                      _updateTransformSettings();
-                    },
-                    child: Container(
-                      margin: const EdgeInsets.only(left: 4),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isSelected
-                            ? const Color(0xFF3B82F6)
-                            : const Color(0xFF1E2235),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        '$deg°',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                          color: isSelected
-                              ? Colors.white
-                              : const Color(0xFF94A3B8),
-                        ),
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 10),
-
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                _targetCamera == 'front'
-                    ? 'Mirror Front Camera (Selfie)'
-                    : (_targetCamera == 'back'
-                          ? 'Mirror Back Camera'
-                          : 'Mirror Camera'),
-                style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-              ),
-              Transform.scale(
-                scale: 0.75,
-                child: CupertinoSwitch(
-                  value: _activeFraming.mirror,
-                  activeTrackColor: const Color(0xFF3B82F6),
-                  onChanged: (val) {
-                    setState(() {
-                      _activeFraming.mirror = val;
-                      if (_targetCamera == 'both') {
-                        _frontFraming.mirror = val;
-                        _backFraming.mirror = val;
-                      }
-                    });
-                    _updateTransformSettings();
-                  },
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTargetSegment(String target, String title, IconData icon) {
-    final isSelected = _targetCamera == target;
-    final isSimActive = _isSimCameraActive && _simActiveCamera == target;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => _selectTargetCamera(target),
-        child: Container(
-          decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFF3B82F6) : Colors.transparent,
-            borderRadius: BorderRadius.circular(6),
-          ),
-          alignment: Alignment.center,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                icon,
-                size: 11,
-                color: isSelected ? Colors.white : const Color(0xFF94A3B8),
-              ),
-              const SizedBox(width: 4),
-              Flexible(
-                child: Text(
-                  title,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                    color: isSelected ? Colors.white : const Color(0xFF94A3B8),
-                  ),
-                ),
-              ),
-              if (isSimActive) ...[
-                const SizedBox(width: 4),
-                Container(
-                  width: 5,
-                  height: 5,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF10B981),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildContextualCard() {
-    Widget content = const SizedBox.shrink();
-
-    if (_currentSource == CameraSourceType.image) {
-      final name = _customImagePath != null
-          ? _customImagePath!.split('/').last
-          : 'No file selected';
-      content = Row(
-        children: [
-          Expanded(
-            child: Text(
-              name,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-            ),
-          ),
-          const SizedBox(width: 8),
-          CupertinoButton(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            color: const Color(0xFF2D3748),
-            borderRadius: BorderRadius.circular(6),
-            onPressed: _pickImageFile,
-            child: const Text('Browse', style: TextStyle(fontSize: 11)),
-          ),
-        ],
-      );
-    } else if (_currentSource == CameraSourceType.demoVideo) {
-      content = Row(
-        children: [
-          const Icon(CupertinoIcons.film, size: 14, color: Color(0xFF60A5FA)),
-          const SizedBox(width: 8),
-          Expanded(
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<String>(
-                value: _bundledVideoAssets.contains(_selectedBundledVideoAsset)
-                    ? _selectedBundledVideoAsset
-                    : null,
-                hint: const Text(
-                  'Choose bundled video',
-                  style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-                ),
-                isExpanded: true,
-                isDense: true,
-                dropdownColor: const Color(0xFF1E2235),
-                borderRadius: BorderRadius.circular(10),
-                style: const TextStyle(fontSize: 11, color: Colors.white),
-                items: _bundledVideoAssets.map((asset) {
-                  return DropdownMenuItem<String>(
-                    value: asset,
-                    child: Text(
-                      asset.split('/').last,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  );
-                }).toList(),
-                onChanged: (asset) {
-                  if (asset == null) return;
-                  setState(() => _selectedBundledVideoAsset = asset);
-                  unawaited(_activateSource(CameraSourceType.demoVideo));
-                },
-              ),
-            ),
-          ),
-          if (_bundledVideoAssets.isEmpty)
-            CupertinoButton(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              onPressed: _loadBundledVideoAssets,
-              child: const Text('Retry', style: TextStyle(fontSize: 10)),
-            ),
-        ],
-      );
-    } else if (_currentSource == CameraSourceType.video) {
-      final name = _customVideoPath != null
-          ? _customVideoPath!.split('/').last
-          : 'No file selected';
-      content = Row(
-        children: [
-          Expanded(
-            child: Text(
-              name,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-            ),
-          ),
-          const SizedBox(width: 8),
-          CupertinoButton(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            color: const Color(0xFF2D3748),
-            borderRadius: BorderRadius.circular(6),
-            onPressed: _pickVideoFile,
-            child: const Text('Browse', style: TextStyle(fontSize: 11)),
-          ),
-        ],
-      );
-    } else if (_currentSource == CameraSourceType.qrCode) {
-      content = Row(
-        children: [
-          Expanded(
-            child: CupertinoTextField(
-              controller: _qrController,
-              placeholder: 'Payload URL or text...',
-              style: const TextStyle(fontSize: 11, color: Colors.white),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1E2235),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              onSubmitted: (_) => _activateSource(CameraSourceType.qrCode),
-            ),
-          ),
-          const SizedBox(width: 8),
-          CupertinoButton(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            color: const Color(0xFF2563EB),
-            borderRadius: BorderRadius.circular(6),
-            onPressed: () => _activateSource(CameraSourceType.qrCode),
-            child: const Text('Apply', style: TextStyle(fontSize: 11)),
-          ),
-        ],
-      );
-    } else if (_currentSource == CameraSourceType.passthrough) {
-      content = Row(
-        children: [
-          const Icon(
-            CupertinoIcons.macwindow,
-            size: 14,
-            color: Color(0xFF60A5FA),
-          ),
-          const SizedBox(width: 8),
-          const Expanded(
-            child: Text(
-              'Capturing screen behind Simulator',
-              style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-            ),
-          ),
-          if (!_hasScreenCapturePermission)
-            CupertinoButton(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              color: const Color(0xFFDC2626),
-              borderRadius: BorderRadius.circular(6),
-              onPressed: () async {
-                await _controlChannel.invokeMethod(
-                  'openSystemPreferencesScreenCapture',
-                );
-              },
-              child: const Text('Grant Access', style: TextStyle(fontSize: 10)),
-            ),
-        ],
-      );
-    }
-
-    return GlassPanel(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      radius: 14,
-      child: content,
-    );
-  }
-
-  // Bottom Card matching orange arrow in ui.webp
-  Widget _buildSimulatorCameraBottomCard() {
     final simulator = _bootedSimulators.isEmpty
         ? null
         : _bootedSimulators.first;
     final runningApp = simulator?['runningAppBundle']?.toString();
     final appBundle = _connectedAppBundle ?? runningApp;
 
-    return SimulatorCameraPanel(
-      source: _currentSource,
-      onSourceChanged: _activateSource,
-      simulatorName: simulator?['name']?.toString(),
-      isDiscovering: _isDiscoveringSimulators,
-      appBundle: appBundle,
-      isConnected: _connectedAppBundle != null,
-      isCameraActive: _isSimCameraActive,
-      activeCamera: _simActiveCamera,
-      isSettingUp: _isSimulatorSetupRunning,
-      setupComplete:
-          _simulatorSetupComplete || simulator?['isInjected'] == true,
-      setupMessage: _simulatorSetupMessage,
-      setupError: _simulatorSetupError,
-      onStartSetup: _startSimulatorSetup,
-      onOpenSimulator: _openSimulator,
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: SafeArea(
+        top: false,
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 356),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  // Top Tool Tab Bar (matching image.png)
+                  FloatingToolbar(
+                    selectedIndex: _selectedToolbarTab,
+                    onTabSelected: (index) {
+                      setState(() => _selectedToolbarTab = index);
+                    },
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Main Floating Settings Panel
+                  _buildMainSettingsPanel(),
+                  const SizedBox(height: 14),
+
+                  // Quick Status Pill (09:41 | Connected)
+                  QuickStatusPill(
+                    statusText: _connectedAppBundle != null
+                        ? 'Connected'
+                        : (_bootedSimulators.isNotEmpty
+                              ? 'Simulator Ready'
+                              : 'Connected'),
+                    isConnected:
+                        _connectedAppBundle != null ||
+                        _bootedSimulators.isNotEmpty,
+                    onTap: () {
+                      unawaited(_fetchCameras());
+                      unawaited(_fetchSimulators());
+                    },
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Simulator Camera Panel (matching bottom card in image.png)
+                  _buildSimulatorCameraBottomCard(simulator, appBundle),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
-  Widget _buildSettingRow({required String label, required Widget control}) {
-    return SettingRow(label: label, control: control);
-  }
+  Widget _buildMainSettingsPanel() => MainSettingsPanel(
+    currentSource: _currentSource,
+    targetCamera: _targetCamera,
+    activeFraming: _activeFraming,
+    isSimCameraActive: _isSimCameraActive,
+    simActiveCamera: _simActiveCamera,
+    availableCameras: _availableCameras,
+    selectedCameraId: _selectedCameraId,
+    onCameraSelected: (id) {
+      setState(() => _selectedCameraId = id);
+      _activateSource(CameraSourceType.webcam);
+    },
+    onFitModeChanged: _setFitMode,
+    onTargetCameraSelected: _selectTargetCamera,
+    onZoomChanged: (val) {
+      setState(() => _activeFraming.zoom = val);
+      _updateTransformSettings();
+    },
+    onOffsetXChanged: (val) {
+      setState(() => _activeFraming.offsetX = val);
+      _updateTransformSettings();
+    },
+    onOffsetYChanged: (val) {
+      setState(() => _activeFraming.offsetY = val);
+      _updateTransformSettings();
+    },
+    onRotationChanged: (deg) {
+      setState(() => _activeFraming.rotation = deg);
+      _updateTransformSettings();
+    },
+    onMirrorChanged: (val) {
+      setState(() {
+        _activeFraming.mirror = val;
+        if (_targetCamera == 'both') {
+          _frontFraming.mirror = val;
+          _backFraming.mirror = val;
+        }
+      });
+      _updateTransformSettings();
+    },
+    onResetTransform: _resetTransform,
+    bundledVideoAssets: _bundledVideoAssets,
+    selectedBundledVideoAsset: _selectedBundledVideoAsset,
+    onBundledVideoSelected: (asset) {
+      setState(() => _selectedBundledVideoAsset = asset);
+      unawaited(_activateSource(CameraSourceType.demoVideo));
+    },
+    customImagePath: _customImagePath,
+    onPickImage: _pickImageFile,
+    customVideoPath: _customVideoPath,
+    onPickVideo: _pickVideoFile,
+    qrController: _qrController,
+    onApplyQr: () => _activateSource(CameraSourceType.qrCode),
+    hasScreenCapturePermission: _hasScreenCapturePermission,
+    onRequestScreenCapturePermission: () async {
+      await _controlChannel.invokeMethod('openSystemPreferencesScreenCapture');
+    },
+    selectedTab: _selectedToolbarTab,
+    onOpenSimulator: _openSimulator,
+    onStartSetup: _startSimulatorSetup,
+    onOpenViewfinder: () {
+      showCurrentViewfinder(
+        context: context,
+        frame: _previewFrameNotifier,
+        camera: _previewTarget,
+        zoom: _previewTarget == 'front'
+            ? _frontFraming.zoom
+            : _backFraming.zoom,
+      );
+    },
+  );
+
+  Widget _buildSimulatorCameraBottomCard(
+    Map<String, dynamic>? simulator,
+    String? appBundle,
+  ) => SimulatorCameraPanel(
+    source: _currentSource,
+    onSourceChanged: _activateSource,
+    simulatorName: simulator?['name']?.toString(),
+    isDiscovering: _isDiscoveringSimulators,
+    appBundle: appBundle,
+    isConnected: _connectedAppBundle != null,
+    isCameraActive: _isSimCameraActive,
+    activeCamera: _simActiveCamera,
+    isSettingUp: _isSimulatorSetupRunning,
+    setupComplete: _simulatorSetupComplete || simulator?['isInjected'] == true,
+    setupMessage: _simulatorSetupMessage,
+    setupError: _simulatorSetupError,
+    onStartSetup: _startSimulatorSetup,
+    onOpenSimulator: _openSimulator,
+  );
 }

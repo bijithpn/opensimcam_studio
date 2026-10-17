@@ -60,7 +60,7 @@ final class StudioTrayController: NSObject, NSPopoverDelegate {
         popover.behavior = .transient
         popover.delegate = self
         popover.animates = true
-        popover.contentSize = NSSize(width: 330, height: 560)
+        popover.contentSize = NSSize(width: 315, height: 385)
         popover.contentViewController = NSHostingController(
             rootView: StudioTrayContent(model: model)
         )
@@ -187,7 +187,53 @@ private struct StudioTrayContent: View {
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 10) {
+            // Header: App icon, Title, Connection Dot & Badge, Refresh and Open buttons
+            HStack(spacing: 8) {
+                Image(systemName: "camera.aperture")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color(red: 0.12, green: 0.52, blue: 1.0))
+
+                Text("OpenSC")
+                    .font(.system(size: 13, weight: .bold))
+
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(model.isConnected ? Color.green : (model.hasBootedSimulator ? Color.blue : Color.gray))
+                        .frame(width: 6, height: 6)
+                    Text(model.isConnected ? "Live" : (model.hasBootedSimulator ? "Ready" : "Offline"))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.white.opacity(0.08), in: Capsule())
+
+                Spacer(minLength: 0)
+
+                Button {
+                    model.onRefresh?()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Refresh simulator status")
+
+                Button {
+                    model.onOpenStudio?()
+                } label: {
+                    Image(systemName: "arrow.up.forward.app")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Open Studio window")
+            }
+            .padding(.top, 2)
+
+            // Compact Camera Preview
             ZStack(alignment: .bottomLeading) {
                 Group {
                     if let image = model.previewImage {
@@ -195,80 +241,80 @@ private struct StudioTrayContent: View {
                             .resizable()
                             .scaledToFit()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .background(Color.black.opacity(0.78))
+                            .background(Color.black.opacity(0.85))
                     } else {
-                        VStack(spacing: 9) {
+                        VStack(spacing: 6) {
                             Image(systemName: "viewfinder")
-                                .font(.system(size: 26, weight: .light))
-                            Text("Waiting for live preview")
-                                .font(.system(size: 12))
+                                .font(.system(size: 20, weight: .light))
+                            Text("No preview stream")
+                                .font(.system(size: 11))
                         }
-                        .foregroundStyle(.white.opacity(0.68))
+                        .foregroundStyle(.white.opacity(0.55))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Color.black.opacity(0.32))
+                        .background(Color.black.opacity(0.4))
                     }
                 }
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     Circle()
                         .fill(model.isConnected ? Color.green : Color.gray)
-                        .frame(width: 7, height: 7)
-                    Text(model.isConnected ? "LIVE VIEW" : "CURRENT VIEW")
-                        .font(.system(size: 9, weight: .bold))
-                        .tracking(0.6)
+                        .frame(width: 5, height: 5)
+                    Text(model.isConnected ? "STREAMING" : "STANDBY")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .tracking(0.5)
                 }
-                .padding(.horizontal, 9)
-                .padding(.vertical, 6)
-                .background(.black.opacity(0.62), in: Capsule())
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(.black.opacity(0.68), in: Capsule())
                 .foregroundStyle(.white)
-                .padding(10)
+                .padding(8)
             }
-            .frame(height: 176)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .frame(height: 125)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
+            )
 
-            HStack(spacing: 8) {
-                Image(systemName: "camera.aperture")
+            // Simulator & App Status Line
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Image(systemName: "iphone")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                    Text(model.simulatorName)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                }
+                Text("\(model.appName) · \(model.connectionStatus)")
+                    .font(.system(size: 10))
                     .foregroundStyle(.secondary)
-                Text("OpenSC")
-                    .font(.system(size: 15, weight: .semibold))
-                Spacer(minLength: 0)
-                Button {
-                    model.onRefresh?()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.plain)
-                .help("Refresh simulator status")
+                    .lineLimit(1)
             }
-            .padding(.top, 14)
+            .padding(.vertical, 2)
 
-            Text(model.simulatorName)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
-                .padding(.top, 5)
-            Text("\(model.appName) · \(model.connectionStatus)")
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-                .padding(.top, 3)
+            Divider()
 
-            Divider().padding(.vertical, 12)
-
-            Text("CAMERA SOURCE")
-                .font(.system(size: 9, weight: .bold))
-                .tracking(0.7)
-                .foregroundStyle(.secondary)
-            Picker("Camera source", selection: $model.selectedSource) {
-                ForEach(sources, id: \.0) { source in
-                    Text(source.1).tag(source.0)
+            // Quick Camera Source Picker
+            HStack {
+                Text("Source")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Picker("", selection: $model.selectedSource) {
+                    ForEach(sources, id: \.0) { source in
+                        Text(source.1).tag(source.0)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(maxWidth: 180)
+                .onChange(of: model.selectedSource) { _, source in
+                    model.onSourceChanged?(source)
                 }
             }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .onChange(of: model.selectedSource) { _, source in
-                model.onSourceChanged?(source)
-            }
-            .padding(.top, 4)
 
+            // Primary Setup / Launch Action Button
             Button {
                 if model.hasBootedSimulator {
                     model.onStartSetup?()
@@ -276,89 +322,57 @@ private struct StudioTrayContent: View {
                     model.onOpenSimulator?()
                 }
             } label: {
-                HStack(spacing: 7) {
+                HStack(spacing: 6) {
                     if model.isSettingUp {
-                        // Avoid NSProgressIndicator's dynamic accent-color
-                        // resolution here. On macOS 26.2 it can recurse through
-                        // AppKit appearance resolution and overflow the main
-                        // thread stack while the tray redraws.
                         Image(systemName: "hourglass")
                     } else {
-                        Image(systemName: "bolt.horizontal.circle")
+                        Image(systemName: model.hasBootedSimulator ? "bolt.fill" : "play.fill")
                     }
                     Text(model.isSettingUp
-                         ? "Applying camera setup…"
+                         ? "Applying setup…"
                          : model.hasBootedSimulator ? "Apply Camera Setup" : "Open Simulator")
                 }
                 .frame(maxWidth: .infinity)
-                .frame(height: 31)
+                .frame(height: 28)
                 .font(.system(size: 11, weight: .semibold))
             }
             .buttonStyle(.borderedProminent)
             .tint(Color(red: 0.12, green: 0.46, blue: 0.88))
             .disabled(model.isSettingUp)
-            .padding(.top, 10)
-
-            if model.hasBootedSimulator && !model.isConnected &&
-                model.appName != "Waiting for an app" &&
-                model.connectionStatus == "Camera ready" {
-                Text("If this app was already open before setup, relaunch the app once to load the camera plugin. Keep Simulator running.")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 7)
-            }
 
             if let setupError = model.setupError {
-                HStack(alignment: .top, spacing: 6) {
+                HStack(alignment: .top, spacing: 5) {
                     Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
                     Text(setupError)
+                        .font(.system(size: 10))
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .font(.system(size: 10))
                 .foregroundStyle(Color(red: 0.96, green: 0.48, blue: 0.48))
-                .padding(.top, 7)
             }
 
-            Divider().padding(.vertical, 12)
+            Divider()
 
-            Text("UPDATES & CHANGES")
-                .font(.system(size: 9, weight: .bold))
-                .tracking(0.7)
-                .foregroundStyle(.secondary)
-            changeRow("Automatic simulator detection and camera setup")
-            changeRow("Live viewfinder and camera framing controls")
-
+            // Footer Toolbar: Open Studio & Quit
             HStack {
                 Button("Open Studio") {
                     model.onOpenStudio?()
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.small)
+
                 Spacer()
+
                 Button("Quit") {
                     NSApp.terminate(nil)
                 }
                 .buttonStyle(.plain)
+                .font(.system(size: 11))
                 .foregroundStyle(.secondary)
             }
-            .padding(.top, 12)
         }
         .padding(14)
-        .frame(width: 330)
+        .frame(width: 315)
         .background(.ultraThinMaterial)
-    }
-
-    private func changeRow(_ title: String) -> some View {
-        HStack(alignment: .top, spacing: 7) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 10))
-                .foregroundStyle(.green.opacity(0.85))
-                .padding(.top, 2)
-            Text(title)
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.top, 7)
     }
 }

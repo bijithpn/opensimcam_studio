@@ -11,34 +11,52 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     RegisterGeneratedPlugins(registry: flutterViewController)
     OpenSCBridge.register(with: flutterViewController.registrar(forPlugin: "OpenSCBridge"))
 
-    self.title = "OpenSC (Open Source Simulator Cam)"
+    self.title = ""
     self.titlebarAppearsTransparent = true
     self.titleVisibility = .hidden
     self.styleMask.insert(.fullSizeContentView)
     self.styleMask.remove(.miniaturizable)
     self.delegate = self
     self.isMovableByWindowBackground = true
-    self.isOpaque = true
-    self.backgroundColor = NSColor(srgbRed: 0.08, green: 0.085, blue: 0.095, alpha: 1)
+    self.isOpaque = false
+    self.backgroundColor = .clear
+    self.hasShadow = false
+
+    // Hide macOS traffic light buttons (close, minimize, zoom)
+    self.standardWindowButton(.closeButton)?.isHidden = true
+    self.standardWindowButton(.miniaturizeButton)?.isHidden = true
+    self.standardWindowButton(.zoomButton)?.isHidden = true
+    self.standardWindowButton(.closeButton)?.alphaValue = 0
+    self.standardWindowButton(.miniaturizeButton)?.alphaValue = 0
+    self.standardWindowButton(.zoomButton)?.alphaValue = 0
+
     self.contentView?.wantsLayer = true
-    self.contentView?.layer?.backgroundColor = self.backgroundColor.cgColor
-    self.contentView?.layer?.isOpaque = true
+    self.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
+    self.contentView?.layer?.isOpaque = false
     flutterViewController.view.wantsLayer = true
-    flutterViewController.view.layer?.backgroundColor = self.backgroundColor.cgColor
-    flutterViewController.view.layer?.isOpaque = true
+    flutterViewController.view.layer?.backgroundColor = NSColor.clear.cgColor
+    flutterViewController.view.layer?.isOpaque = false
+    flutterViewController.backgroundColor = .clear
     
-    self.setContentSize(NSSize(width: 360, height: 720))
-    self.minSize = NSSize(width: 340, height: 600)
-    self.maxSize = NSSize(width: 440, height: 860)
+    self.setContentSize(NSSize(width: 360, height: 760))
+    self.minSize = NSSize(width: 320, height: 580)
+    self.maxSize = NSSize(width: 420, height: 950)
     self.center()
 
     super.awakeFromNib()
 
-    // Run the camera and status tray as a background utility by default.
-    // The user can bring Studio forward from the tray when needed.
+    // Show floating companion tools window on launch
     DispatchQueue.main.async { [weak self] in
-      self?.orderOut(nil)
+      self?.makeKeyAndOrderFront(nil)
     }
+  }
+
+  override var canBecomeKey: Bool {
+    return true
+  }
+
+  override var canBecomeMain: Bool {
+    return true
   }
 
   func windowShouldClose(_ sender: NSWindow) -> Bool {
