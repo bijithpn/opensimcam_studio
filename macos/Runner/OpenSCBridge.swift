@@ -73,6 +73,7 @@ public final class OpenSCBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
         
         // Start background socket server
         FrameHandshakeServer.shared.start()
+        FrameHandshakeServer.shared.scanExistingProcessSockets()
         
         // Hook up preview frames
         FrameHandshakeServer.shared.onPreviewFrame = { [weak instance] data in
@@ -151,6 +152,7 @@ public final class OpenSCBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
             for (method, arguments) in pendingCalls {
                 channel?.invokeMethod(method, arguments: arguments)
             }
+            server.scanExistingProcessSockets()
             // A simulator app can complete its native handshake before the
             // Dart method handler is attached. Replay the current native
             // connection state so already-running apps appear immediately.
@@ -339,15 +341,17 @@ public final class OpenSCBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
             
         case "getBootedSimulators":
             SimulatorManager.backgroundQueue.async {
-                // Running-app lookup invokes simctl once per device. Initial
-                // UI startup only needs the booted devices; the native
-                // background detector publishes app details shortly after.
-                let sims = SimulatorManager.getBootedSimulators(includeRunningApps: false).map { [
-                    "name": $0.name,
-                    "udid": $0.udid,
-                    "isInjected": $0.isInjected,
-                    "runningAppBundle": ($0.runningAppBundle as Any?) ?? NSNull()
-                ] }
+                FrameHandshakeServer.shared.scanExistingProcessSockets()
+                let connections = server.connectionSnapshot()
+                let sims = SimulatorManager.getBootedSimulators(includeRunningApps: true).map { sim in
+                    let activeConnection = connections.first { $0.simUDID == sim.udid }
+                    return [
+                        "name": sim.name,
+                        "udid": sim.udid,
+                        "isInjected": sim.isInjected || activeConnection != nil,
+                        "runningAppBundle": activeConnection?.bundleID ?? (sim.runningAppBundle as Any?) ?? NSNull()
+                    ]
+                }
                 DispatchQueue.main.async { result(sims) }
             }
             

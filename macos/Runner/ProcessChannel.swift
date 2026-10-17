@@ -5,8 +5,12 @@ import CoreImage
 
 public final class ProcessChannel {
     public let simUDID: String
-    public let bundleID: String
+    public private(set) var bundleID: String
     public let channelPath: String
+    
+    public func updateBundleID(_ newID: String) {
+        bundleID = newID
+    }
     
     private var socketFD: Int32 = -1
     private let stateLock = NSLock()
@@ -108,12 +112,13 @@ public final class ProcessChannel {
     }
     
     private func setupSharedMemory() -> Bool {
+        let dir = (channelPath as NSString).deletingLastPathComponent
         let base = (channelPath as NSString).lastPathComponent
         let parts = base.split(separator: ".")
         let pidStr = !parts.isEmpty ? String(parts[0]) : "\(ProcessInfo.processInfo.processIdentifier)"
         
-        let frontPath = "/private/tmp/com.swmansion.SimCam/\(pidStr).front.stream.shm"
-        let backPath = "/private/tmp/com.swmansion.SimCam/\(pidStr).back.stream.shm"
+        let frontPath = "\(dir)/\(pidStr).front.stream.shm"
+        let backPath = "\(dir)/\(pidStr).back.stream.shm"
         
         do {
             frontShm = try SharedMemoryBuffer(path: frontPath, width: 1920, height: 1080, slotCount: 3)

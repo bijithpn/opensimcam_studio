@@ -86,10 +86,34 @@ public final class SimulatorManager {
         }.first
     }
 
-    private static func getCachedRunningApp(simUDID: String) -> String? {
+    public static func getBundleID(forPID pid: Int, simUDID: String) -> String? {
+        let (status, output) = runXcrun(["simctl", "spawn", simUDID, "launchctl", "list"])
+        guard status == 0 else { return nil }
+        let lines = output.components(separatedBy: "\n")
+        for line in lines {
+            let parts = line.split(whereSeparator: { $0.isWhitespace })
+            if parts.count >= 3, let linePid = Int(parts[0]), linePid == pid {
+                let label = String(parts[2])
+                if let range = label.range(of: "UIKitApplication:") {
+                    let sub = String(label[range.upperBound...])
+                    let bundle = sub.components(separatedBy: "[").first ?? sub
+                    if !bundle.hasPrefix("com.apple.") {
+                        runningAppsLock.lock()
+                        runningAppsCache[simUDID] = bundle
+                        runningAppsLastChecked[simUDID] = Date()
+                        runningAppsLock.unlock()
+                        return bundle
+                    }
+                }
+            }
+        }
+        return nil
+    }
+
+    public static func getCachedRunningApp(simUDID: String) -> String? {
         runningAppsLock.lock()
         if let checkedAt = runningAppsLastChecked[simUDID],
-           Date().timeIntervalSince(checkedAt) < 6 {
+           Date().timeIntervalSince(checkedAt) < 2 {
             let cached = runningAppsCache[simUDID]
             runningAppsLock.unlock()
             return cached
@@ -249,7 +273,7 @@ public final class SimulatorManager {
     
     public static func startAutoDetection(onUpdate: (([BootedSimulator]) -> Void)? = nil) {
         let timer = DispatchSource.makeTimerSource(queue: backgroundQueue)
-        timer.schedule(deadline: .now(), repeating: 3.0)
+        timer.schedule(deadline: .now(), repeating: 1.0)
         timer.setEventHandler {
             let devices = getBootedSimulators(includeRunningApps: false)
             let currentUDIDs = Set(devices.map { $0.udid })
@@ -258,6 +282,9 @@ public final class SimulatorManager {
             runningAppsLastChecked = runningAppsLastChecked.filter { currentUDIDs.contains($0.key) }
             runningAppsCache = runningAppsCache.filter { currentUDIDs.contains($0.key) }
             runningAppsLock.unlock()
+
+            // Proactively connect to any active camera sockets immediately
+            FrameHandshakeServer.shared.scanExistingProcessSockets()
 
             // Publish booted devices before querying app processes or copying
             // the camera loader, so simulator discovery stays responsive.

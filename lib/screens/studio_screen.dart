@@ -137,10 +137,7 @@ class _OpenSCStudioHomeState extends State<OpenSCStudioHome> {
             if (mounted) {
               setState(() {
                 _connectedAppBundle = args['bundleId']?.toString();
-                // The socket handshake proves the app is present, but the
-                // camera is live only after its plugin sends a `start` event.
-                _isSimCameraActive = false;
-                _simulatorSetupComplete = false;
+                _simulatorSetupComplete = true;
                 _simulatorSetupMessage = null;
                 _simulatorSetupError = null;
               });

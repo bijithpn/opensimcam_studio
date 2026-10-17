@@ -15,6 +15,7 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
     
     private var listeningSockets: [Int32] = []
     private var dispatchSources: [DispatchSourceRead] = []
+    private var directoryWatchers: [DispatchSourceFileSystemObject] = []
     private let serverQueue = DispatchQueue(label: "opensc.handshakeserver")
     
     private var activeChannels: [ProcessChannel] = []
@@ -102,12 +103,19 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
         for path in socketPaths {
             try? startListening(at: path)
         }
+        startWatchingSocketDirectories()
+        scanExistingProcessSockets()
     }
     
     public func stop() {
         lifecycleLock.lock()
         isStopping = true
         lifecycleLock.unlock()
+        for watcher in directoryWatchers {
+            watcher.cancel()
+        }
+        directoryWatchers.removeAll()
+
         for source in dispatchSources {
             source.cancel()
         }
@@ -319,7 +327,7 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
         guard reconnectingChannelPaths.contains(path), !isServerStopping else { return }
         let attempt = (reconnectAttempts[path] ?? 0) + 1
         reconnectAttempts[path] = attempt
-        let delay = min(4.0, 0.35 * pow(1.7, Double(attempt - 1)))
+        let delay = (attempt == 1) ? 0.05 : min(2.0, 0.15 * pow(1.5, Double(attempt - 1)))
 
         serverQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self = self,
@@ -396,6 +404,103 @@ public final class FrameHandshakeServer: MediaSourceDelegate {
     private func publishConnected(bundleID: String, simUDID: String) {
         DispatchQueue.main.async { [weak self] in
             self?.onClientConnected?(bundleID, simUDID)
+        }
+    }
+
+    private func startWatchingSocketDirectories() {
+        for path in socketPaths {
+            let dir = (path as NSString).deletingLastPathComponent
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            let fd = open(dir, O_EVTONLY)
+            guard fd >= 0 else { continue }
+            let watcher = DispatchSource.makeFileSystemObjectSource(
+                fileDescriptor: fd,
+                eventMask: [.write, .extend, .attrib],
+                queue: serverQueue
+            )
+            watcher.setEventHandler { [weak self] in
+                self?.scanExistingProcessSockets()
+            }
+            watcher.setCancelHandler {
+                close(fd)
+            }
+            watcher.resume()
+            directoryWatchers.append(watcher)
+        }
+    }
+
+    public func scanExistingProcessSockets() {
+        serverQueue.async { [weak self] in
+            guard let self = self, !self.isServerStopping else { return }
+            let scanDirs = self.socketPaths.map { ($0 as NSString).deletingLastPathComponent }
+            for dir in scanDirs {
+                guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir) else { continue }
+                for file in files where file.hasSuffix(".process.socket") {
+                    let fullPath = (dir as NSString).appendingPathComponent(file)
+                    self.tryConnectDiscoveredSocket(at: fullPath)
+                }
+            }
+        }
+    }
+
+    public func tryConnectDiscoveredSocket(at fullPath: String) {
+        channelsLock.lock()
+        let alreadyConnected = activeChannels.contains { $0.channelPath == fullPath }
+        channelsLock.unlock()
+        if alreadyConnected || reconnectingChannelPaths.contains(fullPath) { return }
+
+        guard FileManager.default.fileExists(atPath: fullPath) else { return }
+
+        let filename = (fullPath as NSString).lastPathComponent
+        let parts = filename.split(separator: ".")
+
+        var matchedUDID: String?
+        var targetPID: Int?
+
+        if parts.count >= 4 && parts.contains("SimCam") {
+            // Format: <token>.<pid>.SimCam.process.socket
+            let token = String(parts[0]).lowercased()
+            if let pid = Int(parts[1]) {
+                targetPID = pid
+            }
+            for sim in SimulatorManager.getBootedSimulators(includeRunningApps: false) {
+                let clean = sim.udid.replacingOccurrences(of: "-", with: "").lowercased()
+                if clean.hasPrefix(token) {
+                    matchedUDID = sim.udid
+                    break
+                }
+            }
+        } else if parts.count >= 3 {
+            // Format: <pid>.process.socket
+            if let pid = Int(parts[0]) {
+                targetPID = pid
+            }
+        }
+
+        let booted = SimulatorManager.getBootedSimulators(includeRunningApps: false)
+        let simUDID = matchedUDID ?? booted.first?.udid ?? "simulator"
+
+        var bundleID = "iOS App"
+        if let pid = targetPID, let app = SimulatorManager.getBundleID(forPID: pid, simUDID: simUDID) {
+            bundleID = app
+        } else if let cached = SimulatorManager.getCachedRunningApp(simUDID: simUDID) {
+            bundleID = cached
+        }
+
+        let channel = ProcessChannel(simUDID: simUDID, bundleID: bundleID, channelPath: fullPath)
+        channel.frontTransformConfig = self.frontTransformConfig
+        channel.backTransformConfig = self.backTransformConfig
+        self.configureCallbacks(for: channel)
+
+        if channel.connect(), channel.isTransportConnected {
+            print("[FrameHandshakeServer] Discovered and connected to active socket: \(fullPath) (bundle: \(bundleID), sim: \(simUDID))")
+            SimulatorManager.recordSuccessfulHandshake(simUDID: simUDID)
+            self.installConnectedChannel(channel)
+            self.publishConnected(bundleID: bundleID, simUDID: simUDID)
+        } else {
+            // Stale or dead socket file from previous run/crash
+            print("[FrameHandshakeServer] Removing stale or unresponsive socket at \(fullPath)")
+            try? FileManager.default.removeItem(atPath: fullPath)
         }
     }
     
